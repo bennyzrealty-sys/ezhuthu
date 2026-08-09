@@ -169,6 +169,35 @@ export function DocumentView({ db, docId, onChange }: DocumentViewProps) {
   }, [virtualizer]);
 
   // -------------------------------------------------------------------------
+  // Font loading
+  // -------------------------------------------------------------------------
+
+  /*
+   * Safety net for the case `font-display: block` is meant to make impossible.
+   * If Manjari has not arrived within the block period the browser paints the
+   * fallback face, and every height measured against it is wrong — at 1,563
+   * blocks that is a scrollbar lying by whole screens. Clearing the cache when
+   * fonts settle costs one re-measure of the ~12 rendered rows.
+   *
+   * On the normal path the font is already loaded here and this fires once
+   * with nothing cached, which is free.
+   */
+  useEffect(() => {
+    if (typeof document === 'undefined' || document.fonts === undefined) return;
+
+    let cancelled = false;
+    void document.fonts.ready.then(() => {
+      if (cancelled) return;
+      heights.current.clear();
+      virtualizer.measure();
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [virtualizer]);
+
+  // -------------------------------------------------------------------------
   // Editing
   // -------------------------------------------------------------------------
 
