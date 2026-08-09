@@ -9,6 +9,19 @@
     <meta name="theme-color" content="#111111" />
     <meta name="description" content="എഴുത്ത് — offline-first long-form editor for Malayalam and English" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Preloaded rather than left to CSS discovery: the @font-face lives in a
+         bundled stylesheet, so without this the font request does not start
+         until the CSS has been fetched and parsed. `font-display: block` means
+         that delay is time the reader spends looking at nothing.
+         crossorigin is required on font preloads even same-origin — omit it
+         and the browser fetches the file twice. -->
+    <link
+      rel="preload"
+      href="/fonts/manjari-regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png" />
     <!-- iOS ignores the manifest here and requires PNG. Given an SVG it

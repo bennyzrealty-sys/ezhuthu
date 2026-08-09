@@ -1,0 +1,38 @@
+/*
+ * The bundled Malayalam face (ADR-0019).
+ *
+ * Served from /public/fonts, precached by the service worker, and never
+ * fetched from a CDN — a font request to a third party is a request carrying
+ * the user's IP and referrer, which is exactly what "nothing leaves the
+ * device" rules out (CLAUDE.md rule 9).
+ *
+ * WHY font-display: block RATHER THAN swap
+ *
+ * The virtualiser caches a measured height per block (render/measure.ts) and
+ * derives total scroll height from it. A font swapping in after those
+ * measurements invalidates every one of them at once, and at 1,563 blocks the
+ * scrollbar jumps by whole screens under the reader's thumb.
+ *
+ * `block` gives a ~3 s window in which the text is invisible rather than
+ * wrong-font, and the file is same-origin, 72 KB, and precached, so in practice
+ * it arrives long inside that window and no swap ever happens. If it does
+ * expire — a cold, throttled first load — DocumentView clears the height cache
+ * on document.fonts.ready, so the fallback path is a re-measure rather than a
+ * lie. `optional` was the other candidate; it would silently give the reader
+ * the device font for a whole session, which is the outcome ADR-0019 exists to
+ * prevent.
+ *
+ * unicode-range is deliberately absent. It would stop the browser downloading
+ * the font for a document that happens to be all Latin, but it also makes the
+ * font's coverage a promise the CSS has to keep in step with the subsetter's
+ * --unicodes list, and getting that pair out of step drops glyphs silently.
+ * The browser's own cmap check does the same job with no duplicated truth.
+ */
+
+@font-face {
+  font-family: 'Manjari';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/manjari-regular.woff2') format('woff2');
+}

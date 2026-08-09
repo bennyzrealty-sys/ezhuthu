@@ -16,7 +16,16 @@
 
 const CACHE = 'ezhuthu-shell-v1';
 
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg'];
+// The font is precached rather than left to the runtime cache below: it is on
+// the first-paint path with `font-display: block` (src/ui/fonts.css), so a
+// cold offline open that has to wait for it shows an empty page (ADR-0019).
+const SHELL = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  '/icons/icon.svg',
+  '/fonts/manjari-regular.woff2',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
