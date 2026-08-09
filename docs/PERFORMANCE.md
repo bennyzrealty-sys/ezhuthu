@@ -84,6 +84,13 @@ a compact index — `{blockId, order, updatedAt, revisionCount, length}`, roughl
 about 200 KB at 2,000 blocks. That index drives the minimap and the scrollbar. Text is fetched by
 range as the viewport needs it; search runs as a cursor over IndexedDB (ADR-0015).
 
+**Signals** are the first feature that competes with typing, and they are kept off that path
+entirely. What the keystroke handler gained in Phase 4 is two map lookups and a subtraction — the
+`input` event's hesitation gap and, on a deletion, a counter. Nothing else: the attention model is
+driven by a 1 Hz sampler that reads a rect for each of the ~12 rendered rows (ADR-0025), and every
+write is queued and flushed on a 2 s timer or on `visibilitychange`. Measured against the Phase 3
+numbers, no budget moved.
+
 **Search** folds each block's text and looks for the needle in it, without building the map from
 folded offsets back to source offsets. That map is what lets a match be highlighted without
 bisecting a grapheme cluster, and it is the expensive half of a search because it segments the

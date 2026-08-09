@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { placeCaret } from './caret';
 import { previousClusterBoundary } from '../text/segmenter';
+import type { TypingSignals } from '../signals/typing';
 
 /** Quiet time before an edit is committed to the log. */
 export const IDLE_COMMIT_MS = 400;
@@ -39,6 +40,25 @@ export interface BlockEditorProps {
   onMergeBack: (blockId: string, text: string) => void;
   onBlur: (blockId: string, text: string) => void;
   onHeight: (blockId: string, height: number) => void;
+  /**
+   * Attention telemetry. Absent is a working editor with no signals, which is
+   * what the unit tests and any future embedding get.
+   *
+   * `isComposing` is passed through raw rather than resolved here: the check
+   * lives in signals/typing.ts, where docs/SIGNALS.md says it lives, so that a
+   * second caller cannot forget it (ADR-0010).
+   */
+  typing?: TypingSignals;
+}
+
+/**
+ * React types `onInput`'s native event as a bare `Event`, and a synthetic
+ * `new Event('input')` — which the perf suite dispatches — genuinely has no
+ * `isComposing`. So read it defensively rather than casting to `InputEvent`;
+ * absent means not composing, which is the safe direction for a signal.
+ */
+function isComposingEvent(event: Event): boolean {
+  return (event as Partial<InputEvent>).isComposing === true;
 }
 
 export function BlockEditor({
@@ -50,6 +70,7 @@ export function BlockEditor({
   onMergeBack,
   onBlur,
   onHeight,
+  typing,
 }: BlockEditorProps) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const composing = useRef(false);
@@ -102,17 +123,25 @@ export function BlockEditor({
 
   useEffect(() => clearTimer, [clearTimer]);
 
-  const handleInput = useCallback(() => {
-    // Everything expensive is deliberately absent from this function.
-    const field = ref.current;
-    if (field === null) return;
-    draft.current = field.value;
-    resize();
-    scheduleCommit();
-  }, [resize, scheduleCommit]);
+  const handleInput = useCallback(
+    (e: React.FormEvent<HTMLTextAreaElement>) => {
+      // Everything expensive is deliberately absent from this function.
+      const field = ref.current;
+      if (field === null) return;
+      draft.current = field.value;
+      // Two map lookups and a subtraction. Anything more expensive than that
+      // does not belong on this path — see docs/PERFORMANCE.md.
+      typing?.input(blockId, isComposingEvent(e.nativeEvent) || composing.current);
+      resize();
+      scheduleCommit();
+    },
+    [blockId, resize, scheduleCommit, typing],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      typing?.keyDown(blockId, e.key, e.nativeEvent.isComposing || composing.current);
+
       // During composition Chrome reports keyCode 229 for everything, so key
       // identity is meaningless. isComposing is authoritative.
       if (e.nativeEvent.isComposing || composing.current) return;
@@ -149,13 +178,17 @@ export function BlockEditor({
         }
       }
     },
-    [blockId, clearTimer, onMergeBack, onSplit],
+    [blockId, clearTimer, onMergeBack, onSplit, typing],
   );
 
   return (
     <textarea
       ref={ref}
       className="block-editor"
+      // The signal collector samples `[data-block-id]`, and the block being
+      // edited is the one most obviously being attended to. Without this it is
+      // the one block that accrues no dwell.
+      data-block-id={blockId}
       dir="auto"
       rows={1}
       spellCheck={false}
@@ -179,6 +212,9 @@ export function BlockEditor({
       }}
       onBlur={() => {
         clearTimer();
+        // Drops the hesitation clock: the gap either side of leaving a block is
+        // navigation, not the writer pausing over this sentence.
+        typing?.blur();
         // Blur during composition finalises it first; the browser fires
         // compositionend before blur, so the draft is already settled.
         onBlur(blockId, draft.current);

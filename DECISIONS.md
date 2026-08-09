@@ -951,3 +951,60 @@ slashed zero.
 - Anyone re-subsetting gets a pass/fail at the point of running the script, not at the point of
   reading a rendered page in Malayalam and wondering whether it looks right.
 - The claim "a rendering test asserts the expected shaped width" is now true; it was aspirational.
+
+---
+
+## ADR-0025 — Sample the rendered rows on a timer; do not observe intersections
+
+**Status:** accepted · refines the mechanism named in `docs/SIGNALS.md`; ADR-0017's model is
+unchanged
+
+**Context.** `docs/SIGNALS.md` lists dwell as captured from *"`IntersectionObserver` + the
+attention model"*, and ADR-0017 names IO as the naive approach it corrects. Phase 4 built the
+collector and IO turned out to be the wrong tool twice over.
+
+- **IO reports crossings; the model needs a value over time.** Gates 3 and 4 — centre weighting
+  and settling — are not answered by "this block became 50% visible at t". Accrual has to be
+  computed over intervals, so a timer is required no matter what. IO does not replace the timer;
+  it only feeds it geometry, and geometry that is stale by however long ago the last threshold
+  was crossed.
+- **The question IO exists to answer is already answered.** IO is for finding the few interesting
+  elements among thousands. There are no thousands: the document is virtualised, so about a dozen
+  rows exist in the DOM at any moment (ADR-0004). Every element IO could tell us about is one we
+  can enumerate directly.
+
+Against that, IO costs real complexity: an observer to attach and detach on every row the
+virtualiser recycles, which in React means a ref callback per row — and a ref callback that closes
+over a block id is a new function every render, so the rows would detach and reattach on every
+scroll frame, and `BlockRow`'s memoisation would stop working.
+
+**Decision.** Sample `[data-block-id]` inside the scroller on a `SAMPLE_INTERVAL_MS` timer
+(1 s), read a rect per row, and weight each by the centre of its *visible* extent. No
+`IntersectionObserver` anywhere in `src/signals/`.
+
+Accrual is computed from timestamps rather than tick counts, so the interval sets the model's
+resolution and not its accuracy: a block half-way through settling at a sample boundary accrues
+exactly the settled part of the interval.
+
+**Alternatives considered.**
+
+- *IO with many thresholds, plus a timer.* Two mechanisms where one will do, the observer
+  bookkeeping above, and geometry that is stale between crossings.
+- *Read positions from the virtualiser instead of the DOM.* Its `VirtualItem`s carry offsets, so
+  no layout read at all — but they are positions within the scrolled content, and the model needs
+  positions relative to the viewport. That means combining them with `scrollTop` and the
+  scroller's height, which is a second copy of geometry the browser already has and will be wrong
+  in exactly the cases measurement exists for (a mid-scroll sample, a resize in flight).
+- *Sample only on scroll.* Cheaper, and wrong in the case that matters most: a writer reading
+  without scrolling is the clearest attention there is.
+
+**Consequences.**
+
+- One mechanism, ~12 `getBoundingClientRect` calls a second, none of it on the typing path. The
+  perf suite showed no measurable change against the Phase 3 numbers.
+- A forced layout once a second while scrolling. Bounded by the virtualiser and, at 1 Hz against
+  a 60 Hz frame budget, below the noise floor of the scroll measurement.
+- The sampler is a plain method, so the unit tests drive a synthetic session through it in
+  milliseconds instead of waiting out a 60-second idle cutoff in real time.
+- `docs/SIGNALS.md` is corrected to match. The four gates of ADR-0017 are untouched — this is how
+  the model is fed, not what it decides.

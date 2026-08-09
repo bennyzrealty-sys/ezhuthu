@@ -16,7 +16,7 @@ transmits them.
 
 | Signal | Captured from | What it means |
 |---|---|---|
-| **Dwell** | `IntersectionObserver` + the attention model below | Scrolling fast = searching. Settled 4 s+ = working. |
+| **Dwell** | a 1 s sample of the rendered rows + the attention model below | Scrolling fast = searching. Settled 4 s+ = working. |
 | **Hesitation** | inter-keystroke gaps, bucketed per block | Long pauses before typing = the sentence was hard. |
 | **Backspace density** | delete keystrokes per block per session | Where the writer fought the words. |
 | **Scroll-back** | upward scroll followed by dwell > 2 s | A reference point being checked. Auto-bookmark. |
@@ -48,8 +48,25 @@ Dwell therefore accrues only under four gates:
 4. **Settling.** A block accrues nothing until it has been stable for `SETTLE_MS` (1 s). This is
    what separates scrolling-as-searching from scrolling-as-reading.
 
-The constants live in one module and are named. They are guesses; revisiting them after real use
-is expected.
+The constants live in one module and are named — [`src/signals/constants.ts`](../src/signals/constants.ts).
+They are guesses; revisiting them after real use is expected.
+
+### How the model is fed
+
+Not by an `IntersectionObserver`, despite what the table above said until Phase 4. IO reports
+threshold *crossings*, and gates 3 and 4 need a value over *time* — so a timer is needed either
+way, and IO would only supply staler geometry to it. The question IO exists to answer cheaply,
+"which elements are near the viewport", is one virtualisation has already answered: about a dozen
+rows exist in the DOM at all.
+
+So `src/signals/collector.ts` samples `[data-block-id]` inside the scroller once a second, reads a
+rect per row, and weights each by the centre of its *visible* extent — which is what stops a
+paragraph taller than the screen from scoring zero. Accrual is computed from timestamps rather
+than tick counts, so the interval is the model's resolution and not its accuracy. See ADR-0025.
+
+The model itself (`src/signals/attention.ts`) is pure and takes time as a parameter, so the
+synthetic-session tests drive ten minutes of reading and eight hours of a phone face-up on a desk
+in a few milliseconds.
 
 ## Batching
 
@@ -86,6 +103,18 @@ The signals exist to serve two features. Nothing is collected speculatively.
 **Visibility (Phase 6)** — margin bar intensity and minimap shading come from `updatedAt` and
 `revisionCount`, both from the log rather than from signals. Scroll-back auto-bookmarks come from
 the `scrollback` signal.
+
+## The modules
+
+| File | What |
+|---|---|
+| `constants.ts` | every tunable, named. The ADR-0017 guesses live here and nowhere else |
+| `attention.ts` | the four gates. Pure — time is a parameter, there is no clock inside |
+| `scrollback.ts` | upward-scroll-then-dwell detection. Pure, for the same reason |
+| `typing.ts` | hesitation and backspace density. Checks `isComposing` before anything else |
+| `queue.ts` | coalescing, bounded, 2 s flush. The only code that writes `signals` |
+| `collector.ts` | the DOM half: the 1 s sampler, the activity listeners, `visibilitychange` |
+| `queries.ts` | reading back, and the retention prune |
 
 ## Storage
 

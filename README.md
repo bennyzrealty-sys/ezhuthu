@@ -97,7 +97,7 @@ of every working session. Read it first if you are picking this up cold.
 | 1 | Foundation — log, fold, replay, persistence, backups | **done** |
 | 2 | Editing — block model, virtualised list, focused-block editing | **done** |
 | 3 | Malayalam — segmentation, normalisation, fonts, search | **done** |
-| 4 | Signals — attention telemetry | not started |
+| 4 | Signals — attention telemetry | **done** |
 | 5 | Resume — the four-destination strip | not started |
 | 6 | Visibility — margin bar, decay, minimap, haptics, ghost markers | not started |
 | 7 | Time-lapse + export — scrub UI, edit corpus | not started |

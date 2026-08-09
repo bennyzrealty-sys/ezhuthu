@@ -21,6 +21,7 @@ import {
   type BackupStatus,
   type PersistenceState,
 } from './db/persistence';
+import { pruneSignals } from './signals/queries';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -82,15 +83,49 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement | null>(null);
   const view = useRef<DocumentViewHandle | null>(null);
 
+  /*
+   * Last call wins. Two status loads overlap on the ordinary import path — the
+   * one this component fires on mount and the one the import fires when it
+   * finishes — and on a large document the first is the slower of the two,
+   * because it walks the log to check the projection. Without a ticket its
+   * result lands last and the toolbar reports the document as it was BEFORE
+   * the import: "0 words · 0 blocks" over 80,000 words that are on screen, with
+   * no further refresh coming to correct it.
+   */
+  const loadTicket = useRef(0);
+
   const refresh = useCallback(() => {
+    const ticket = ++loadTicket.current;
     loadStatus()
-      .then(setStatus)
+      .then((fresh) => {
+        if (ticket === loadTicket.current) setStatus(fresh);
+      })
       .catch((error: unknown) =>
         setMessage(error instanceof Error ? error.message : String(error)),
       );
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  /*
+   * Signals older than the retention window have no reader — the queries ask
+   * about the last session and a recent window — and they accumulate for as
+   * long as the app is used. Deleted rather than kept, because unlike the
+   * document they are telemetry about the work and not the work itself
+   * (docs/SIGNALS.md).
+   *
+   * After the first status load, not alongside it. Maintenance on a store
+   * nobody is waiting for has no business competing with opening the document,
+   * which on a 100k-word log is already a projection check and a head-seq read.
+   * Not awaited and not surfaced either: a failure here must change nothing the
+   * writer sees.
+   */
+  const pruned = useRef(false);
+  useEffect(() => {
+    if (status === null || pruned.current) return;
+    pruned.current = true;
+    void pruneSignals(db).catch(() => undefined);
+  }, [status]);
 
   const onImport = useCallback(
     async (file: File) => {

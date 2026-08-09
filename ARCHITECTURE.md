@@ -170,6 +170,12 @@ touches IndexedDB, may run synchronously with a keypress.
 Signals are batched on a 2-second flush (or on `visibilitychange`) for the same reason: telemetry
 must never compete with typing for the main thread.
 
+One honest qualification, added in Phase 4. *Capturing* a hesitation cannot be deferred — the gap
+between two keystrokes only exists at keystroke time — so `signals/typing.ts` does run inside the
+handler. What it does there is two map lookups and a subtraction, and the record it produces goes
+into an in-memory queue. Everything with a cost — the IndexedDB write, the geometry, the attention
+model — is on a timer elsewhere. "Deferred" means the work, not the observation.
+
 ## Storage durability
 
 Browsers evict IndexedDB. On iOS this is not hypothetical — storage for a site that has not been
