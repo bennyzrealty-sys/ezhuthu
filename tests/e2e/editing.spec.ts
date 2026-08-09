@@ -29,6 +29,14 @@ test('tapping a block opens an editor in its place', async ({ page }) => {
   await importCorpus(page, SMALL_DOC);
 
   const first = page.locator('.block-row').first();
+  /*
+   * Wait for the text before reading it. A row mounts before its text arrives —
+   * DocumentView fetches text by window, after the index — and renders a single
+   * space until it does. A one-shot textContent() therefore captures " " on a
+   * busy machine, and the assertion below then compares the editor's real value
+   * against it and reports the race as breakage. Same trap as ime.spec.ts.
+   */
+  await expect(first).toContainText('ഒന്നാം');
   const original = (await first.textContent()) ?? '';
   await first.click();
 

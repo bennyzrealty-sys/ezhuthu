@@ -64,9 +64,21 @@ test('renders a bounded window regardless of document size', async ({ page }) =>
   await seed(page);
 
   const rendered = await page.locator('.doc-item').count();
-  const blocks = await page.evaluate(() =>
-    Number(document.querySelector('.doc-toolbar .stat')?.textContent?.match(/([\d,]+) blocks/)?.[1]?.replace(/,/g, '') ?? 0),
-  );
+
+  /*
+   * Poll for the count rather than reading it once. The toolbar shows an
+   * ellipsis until the status load finishes, and on this corpus that load walks
+   * the log to check the projection — comfortably longer than the import takes
+   * to put rows on screen. A one-shot read captures the ellipsis, or a count
+   * from before the import, and reports "0 blocks": indistinguishable from the
+   * virtualiser rendering a document that is not there.
+   */
+  const blockCount = () =>
+    page.evaluate(() =>
+      Number(document.querySelector('.doc-toolbar .stat')?.textContent?.match(/([\d,]+) blocks/)?.[1]?.replace(/,/g, '') ?? 0),
+    );
+  await expect.poll(blockCount, { timeout: 30_000 }).toBeGreaterThan(1000);
+  const blocks = await blockCount();
 
   console.log(`rendered ${rendered} of ${blocks} blocks`);
   expect(blocks).toBeGreaterThan(1000);
