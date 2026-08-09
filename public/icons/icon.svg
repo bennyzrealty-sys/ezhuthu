@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ezhuthu">
+  <rect width="512" height="512" rx="96" fill="#111111"/>
+  <!-- The margin intensity bar, which is the app's whole visual idea. -->
+  <rect x="96" y="128" width="16" height="256" rx="8" fill="#e8734a"/>
+  <rect x="144" y="152" width="272" height="18" rx="9" fill="#f5f2ec"/>
+  <rect x="144" y="206" width="224" height="18" rx="9" fill="#f5f2ec" opacity="0.8"/>
+  <rect x="144" y="260" width="256" height="18" rx="9" fill="#f5f2ec" opacity="0.6"/>
+  <rect x="144" y="314" width="192" height="18" rx="9" fill="#f5f2ec" opacity="0.4"/>
+</svg>
