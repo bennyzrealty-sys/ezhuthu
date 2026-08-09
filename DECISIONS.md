@@ -293,9 +293,15 @@ query and involves no replay. Snapshots exist for one purpose: **anchoring histo
 reconstruction** for the time-lapse scrub, which must materialise arbitrary past states at
 interactive drag rates.
 
-Retention follows a **logarithmic ladder** — dense near head, progressively sparser going back —
-so any point in history is within a bounded number of events of an anchor while total snapshot
-storage stays O(log n) in log length.
+Retention follows a **logarithmic ladder**: at most one anchor per octave of age, so anchors are
+dense near head and progressively sparser going back, and total snapshot storage stays O(log n) in
+log length.
+
+The resulting guarantee — and the reason it is safe to drop the oldest anchors — is that
+**reconstructing any past state never replays more events than lie between that state and the
+present.** A state early in the log needs no anchor at all, because replaying it from empty is
+bounded by its own position, which is small precisely because it is early. Asserted across several
+log sizes in `tests/unit/snapshots.test.ts`.
 
 **Alternatives considered.**
 

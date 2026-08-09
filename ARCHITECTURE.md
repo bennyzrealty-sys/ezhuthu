@@ -110,11 +110,17 @@ materialise the document as it existed at an arbitrary past `seq`, at interactiv
 genuinely does require replay, and replay from empty is far too slow. Snapshots are anchors that
 bound it.
 
-This reframing changes the retention policy in a way that matters: because their job is
-time-travel rather than startup, snapshots must be spread across the document's *whole history*,
-not just recent. We keep a logarithmic ladder — dense near head, sparse going back — so any point
-in time is within a bounded number of events of an anchor, while total snapshot storage stays
-O(log n). See [ADR-0009](DECISIONS.md).
+This reframing changes the retention policy in a way that matters. We keep a **logarithmic
+ladder**: at most one anchor per octave of age, so anchors are dense near head and progressively
+sparser going back, and total snapshot storage is O(log n) in log length.
+
+The guarantee that falls out is worth stating precisely, because it is the reason dropping the
+oldest anchors is safe: **reconstructing any past state never replays more events than lie between
+that state and the present.** Recent states are cheap — an anchor is close by. Distant states cost
+more, but a state early in the log needs no anchor at all, since replaying it from empty is
+bounded by its own position, which is small precisely because it is early. The property is
+asserted in `tests/unit/snapshots.test.ts` across several log sizes. See
+[ADR-0009](DECISIONS.md).
 
 Replay for the scrub runs in a Web Worker (`src/features/timelapse/replay.worker.ts`) so dragging
 never competes with typing for the main thread.

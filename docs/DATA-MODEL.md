@@ -14,6 +14,7 @@ Background: [`ARCHITECTURE.md`](../ARCHITECTURE.md). Rationale: [`DECISIONS.md`]
 | `blocks` | materialised head state, fast read path | **cache** — rebuildable |
 | `snapshots` | materialised past states, time-travel anchors | **cache** — disposable |
 | `signals` | attention telemetry | truth (local, non-critical) |
+| `settings` | small key/value — chiefly the backup directory handle | truth (non-critical) |
 
 Only `events` and `docs` are irreplaceable. Dropping `blocks` and `snapshots` costs a rebuild,
 never data. A backup (ADR-0013) therefore contains `events` + `docs` and nothing else.
@@ -27,8 +28,13 @@ db.version(1).stores({
   events:    'id, &[docId+seq+deviceId], [docId+seq], [docId+blockId+seq], ts',
   snapshots: '[docId+seq], docId, ts',
   signals:   '++id, [docId+blockId], [docId+ts], ts',
+  settings:  'key',
 });
 ```
+
+`settings` exists for one reason: the `FileSystemDirectoryHandle` a user picks
+for scheduled backups is structured-cloneable but not serialisable, so it can
+live in IndexedDB and nowhere else — `localStorage` cannot hold it.
 
 Why each index exists:
 

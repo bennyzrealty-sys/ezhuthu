@@ -68,15 +68,17 @@ These are enforced by `tests/perf`, not vibes. A change that breaks one is a fai
 
 ## Current status
 
-**Phase 1 — Foundation.** Scaffold, documentation, Dexie schema, event log, snapshot/replay,
-storage-persistence and backup, fold correctness tests.
+**Phase 1 — Foundation complete.** Scaffold, documentation, Dexie schema, event log,
+snapshot/replay, storage persistence and backups, and 105 unit tests including the fold
+equivalence property. There is no editor yet — that is Phase 2. The current screen exercises the
+event log and the durability layer underneath it.
 
 Build order and per-phase state live in [`HANDOFF.md`](HANDOFF.md), which is updated at the end
 of every working session. Read it first if you are picking this up cold.
 
 | Phase | What | State |
 |---|---|---|
-| 1 | Foundation — log, fold, replay, persistence, backups | in progress |
+| 1 | Foundation — log, fold, replay, persistence, backups | **done** |
 | 2 | Editing — block model, virtualised list, focused-block editing | not started |
 | 3 | Malayalam — segmentation, normalisation, fonts, search | not started |
 | 4 | Signals — attention telemetry | not started |
@@ -114,5 +116,9 @@ additional scripts. Designed for; not built.
 
 ## Licence
 
-MIT. Bundled fonts (Manjari, Noto Sans Malayalam) are under the SIL Open Font License 1.1;
-see `public/fonts/OFL.txt`.
+MIT.
+
+Fonts are not bundled yet — they arrive in Phase 3. Manjari will ship as the default and Noto
+Sans Malayalam as an optional download, both under the SIL Open Font License 1.1, with their
+licence text alongside them in `public/fonts/`. See [ADR-0019](DECISIONS.md) for why only one is
+bundled, and `scripts/subset-fonts.sh` for the subsetting flags that keep conjuncts working.
