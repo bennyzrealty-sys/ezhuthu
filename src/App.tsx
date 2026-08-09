@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { db } from './db/schema';
-import { createDoc } from './core/events';
+import { openDoc } from './core/events';
 import { checkProjection, logHeadSeq, repairProjection } from './core/replay';
 import { importText } from './features/io/import';
 import { DocumentView, type DocumentViewHandle } from './render/DocumentView';
@@ -33,9 +33,22 @@ interface Status {
   usageMb: number | null;
 }
 
+/**
+ * The document record, created on first run.
+ *
+ * Everything that writes has to go through this first. `loadStatus` runs in an
+ * effect, so on a genuinely empty database an Import fired before that effect
+ * settles reaches `importBlocks` with no `docs` row and throws
+ * "import: unknown document primary" — the toolbar shows the error, the app
+ * shows an empty document, and nothing says to try again. Rare in ordinary use
+ * and reliably reproducible with a fast enough first tap.
+ */
+async function ensureDoc(): Promise<Doc> {
+  return openDoc(db, { docId: DOC_ID, title: 'എഴുത്ത്' });
+}
+
 async function loadStatus(): Promise<Status> {
-  let doc = await db.docs.get(DOC_ID);
-  if (doc === undefined) doc = await createDoc(db, { docId: DOC_ID, title: 'എഴുത്ത്' });
+  await ensureDoc();
 
   // If a crash landed between the event append and the block write, the
   // projection is behind the log. Repair before showing anything (ADR-0008).
@@ -84,6 +97,9 @@ export default function App() {
       setBusy('Importing…');
       try {
         const text = await file.text();
+        // Not just belt and braces: on first run this can be reached before
+        // the effect that creates the document has finished.
+        await ensureDoc();
         const result = await importText(db, DOC_ID, text);
         setMessage(
           `Imported ${result.blocksAdded.toLocaleString()} blocks · ${result.wordsAdded.toLocaleString()} words.`,
