@@ -1,9 +1,9 @@
 /**
- * Phase 2 shell: the document, plus the Phase 1 status panel behind a toggle.
+ * Phase 3 shell: the document, search, and the Phase 1 status panel behind a
+ * toggle.
  *
- * Deliberately thin. Resume, visibility, minimap, search and time-lapse are
- * Phases 5-7 and are not stubbed here — an empty button is worse than an
- * absent one.
+ * Deliberately thin. Resume, visibility, minimap and time-lapse are Phases 4-7
+ * and are not stubbed here — an empty button is worse than an absent one.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -11,7 +11,8 @@ import { db } from './db/schema';
 import { createDoc } from './core/events';
 import { checkProjection, logHeadSeq, repairProjection } from './core/replay';
 import { importText } from './features/io/import';
-import { DocumentView } from './render/DocumentView';
+import { DocumentView, type DocumentViewHandle } from './render/DocumentView';
+import { SearchPanel } from './features/search/SearchPanel';
 import {
   estimateStorage,
   getBackupStatus,
@@ -64,7 +65,9 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [searching, setSearching] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const view = useRef<DocumentViewHandle | null>(null);
 
   const refresh = useCallback(() => {
     loadStatus()
@@ -95,6 +98,17 @@ export default function App() {
     },
     [refresh],
   );
+
+  /*
+   * One close path, used by the toolbar toggle, the panel's own button and
+   * Escape. Leaving the toggle to flip `searching` on its own was a real bug:
+   * the panel closed and the mark stayed behind on the paragraph, pointing at
+   * a search the reader had dismissed.
+   */
+  const closeSearch = useCallback(() => {
+    setSearching(false);
+    view.current?.clearHighlight();
+  }, []);
 
   const onBackup = useCallback(() => {
     setBusy('Backing up…');
@@ -129,6 +143,13 @@ export default function App() {
             backup {status.backup.urgency}
           </span>
         )}
+        <button
+          onClick={() => (searching ? closeSearch() : setSearching(true))}
+          aria-expanded={searching}
+          data-testid="search-toggle"
+        >
+          {searching ? 'Close search' : 'Search'}
+        </button>
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
         </button>
@@ -193,7 +214,22 @@ export default function App() {
         </div>
       )}
 
-      <DocumentView key={reloadKey} db={db} docId={DOC_ID} onChange={refresh} />
+      {searching && (
+        <SearchPanel
+          db={db}
+          docId={DOC_ID}
+          onReveal={(hit, matchIndex) =>
+            view.current?.reveal({
+              blockId: hit.blockId,
+              position: hit.position,
+              match: hit.matches[matchIndex],
+            })
+          }
+          onClose={closeSearch}
+        />
+      )}
+
+      <DocumentView ref={view} key={reloadKey} db={db} docId={DOC_ID} onChange={refresh} />
     </div>
   );
 }

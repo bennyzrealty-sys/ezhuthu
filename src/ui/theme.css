@@ -310,6 +310,144 @@ button:disabled {
   height: auto;
 }
 
+/* ---------------------------------------------------------------------------
+   Search (ADR-0015)
+   --------------------------------------------------------------------------- */
+
+.search-panel {
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  /* Bounded so the results never push the document off screen entirely — the
+     reader is comparing a result against the text around it. */
+  max-height: 45dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.search-bar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem 0.4rem;
+}
+
+.search-field {
+  flex: 1;
+  font: inherit;
+  /* Matches the document face: a Malayalam query typed here should look like
+     the text it will be matched against. */
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  /* iOS zooms the viewport when a field's text is under 16px. */
+  font-size: max(1rem, 16px);
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 44px;
+}
+
+.search-bar button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.4rem 0.7rem;
+}
+
+.search-options {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1rem 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+}
+
+.search-options label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.search-options .spacer {
+  flex: 1;
+}
+
+.search-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.search-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.search-results .result {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.5rem 1rem;
+  min-height: 44px;
+}
+
+.search-results .result.current {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.result-position {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 3ch;
+  text-align: end;
+}
+
+.result-text {
+  flex: 1;
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  /* One line per result: the list is for choosing between paragraphs, and a
+     result that wraps to four lines shows three fewer of them. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-count {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-note {
+  padding: 0.5rem 1rem;
+  margin: 0;
+  border-top: 1px solid var(--rule);
+}
+
+/*
+ * Background only — no padding, no weight, no font change. Anything that
+ * alters metrics reflows the paragraph when the highlight clears, and the
+ * reader is looking directly at it. Colour is deliberately not hue-dependent
+ * for the same reason the margin bar is not (ADR-0005).
+ */
+mark,
+.block-match {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  padding: 0;
+  border-radius: 2px;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
