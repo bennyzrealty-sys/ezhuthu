@@ -16,4 +16,14 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  preview: {
+    // Cross-origin isolation, which `measureUserAgentSpecificMemory()` requires.
+    // Preview-only: this is what the perf suite runs against, and the memory
+    // budget is otherwise unmeasurable. Not applied to the production build,
+    // which has no need for it.
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
 });

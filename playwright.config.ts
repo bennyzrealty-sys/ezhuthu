@@ -8,6 +8,15 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Chromium is preinstalled in CI images at PLAYWRIGHT_BROWSERS_PATH.
  */
+/**
+ * Some sandboxes ship a Chromium whose build number does not match the one
+ * this Playwright version downloads. Point at it with PLAYWRIGHT_CHROMIUM_PATH
+ * rather than hardcoding a machine-specific path into committed config; CI
+ * installs its own browser and leaves this unset.
+ */
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_PATH;
+const launchOptions = executablePath ? { launchOptions: { executablePath } } : {};
+
 export default defineConfig({
   testDir: 'tests',
   fullyParallel: true,
@@ -23,13 +32,13 @@ export default defineConfig({
     {
       name: 'e2e',
       testDir: 'tests/e2e',
-      use: { ...devices['Pixel 7'] },
+      use: { ...devices['Pixel 7'], ...launchOptions },
     },
     {
       name: 'perf',
       testDir: 'tests/perf',
-      use: { ...devices['Pixel 7'] },
-      timeout: 120_000,
+      use: { ...devices['Pixel 7'], ...launchOptions },
+      timeout: 180_000,
     },
   ],
   webServer: {
