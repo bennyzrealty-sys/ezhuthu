@@ -3,154 +3,173 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-09 · end of Phase 1
+**Last updated:** 2026-08-09 · end of Phase 2
 
 ---
 
 ## Where the project is
 
-**Phase 1 — Foundation. Complete.** The event log, the fold, replay, snapshots and the storage
-durability layer all work and are tested. There is no editor yet; that is Phase 2.
+**Phases 1 and 2 complete.** The event log and its durability layer work, and there is a working
+editor on top of them: a 1,563-block document renders, scrolls at frame rate, and is editable.
 
 Branch: `claude/ezhuthu-editor-setup-10tfbg`. Every phase ships as its own PR.
 
 ## What works
 
-- **Scaffold** — Vite + React 19 + TypeScript, strict including `noUncheckedIndexedAccess`.
-  `npm run dev`, `build`, `typecheck` all clean.
-- **Documentation set** — README, ARCHITECTURE, DECISIONS (23 ADRs), CLAUDE, and `docs/`
-  (DATA-MODEL, MALAYALAM, SIGNALS, PERFORMANCE). This is the contract; read before coding.
-- **Dexie schema** (`src/db/`) — six stores exactly as documented, with the indexes each feature
-  needs. `settings` was added beyond the original spec to hold the backup directory handle, which
-  is structured-cloneable and cannot live in localStorage.
-- **The fold** (`src/core/fold.ts`) — pure, no React/DOM/Dexie. Handles insert, update, soft
-  delete, restore and move. Maintains a sorted order index incrementally so replay is not
-  quadratic.
-- **Fractional indexing** (`src/core/order.ts`) — full integer-part scheme, so 2,000 sequential
-  appends produce keys ≤ 5 characters instead of growing without bound.
-- **The append path** (`src/core/events.ts`) — the four-step transaction from ADR-0008. Reads only
-  the neighbours it needs, so appending never scans the document.
-- **Replay and repair** (`src/core/replay.ts`) — watermark check, tail repair, full rebuild, and
-  point-in-time reconstruction for the future scrub.
-- **Snapshots** (`src/core/snapshots.ts`) — logarithmic retention ladder.
-- **Durability** (`src/db/persistence.ts`) — persistence request, honest reporting, quota
-  estimate, backup build/write/restore, urgency escalation.
-- **Text** (`src/text/`) — NFC + chillu fold for comparison, word and grapheme counting.
-- **Corpus generator** — `npm run corpus:generate` produces 80,022 words / 1,563 paragraphs of
-  synthetic Malayalam with realistic shaping (chillu in both encodings, 2–4 consonant conjuncts,
-  ZWNJ, interleaved Latin and digits).
-- **PWA scaffolding** — manifest and a cache-first shell service worker.
-- **105 unit tests**, all passing. `npm test`.
+**Foundation (Phase 1).** Dexie schema (six stores), the pure fold, fractional indexing with the
+integer-part scheme, the four-step append transaction, replay/repair/point-in-time reconstruction,
+the snapshot ladder, storage persistence, backups and restore, NFC + chillu normalisation.
+
+**Editing (Phase 2).**
+
+- **Virtualised rendering** (`render/DocumentView.tsx`) — 12 blocks in the DOM out of 1,563.
+  Holds a compact index for every block and fetches text by window, evicting behind.
+- **Grapheme layer** (`text/segmenter.ts`) — cached segmenters, boundary snapping, cluster-wise
+  cursor movement, cluster-safe truncation for previews.
+- **Height cache** (`render/measure.ts`) — per block and per viewport width, bucketed to whole
+  pixels, invalidated on edit and on rotation.
+- **Caret handoff** (`render/caret.ts`) — `caretPositionFromPoint` with the WebKit
+  `caretRangeFromPoint` fallback, text-node walking, grapheme snapping.
+- **The focused editor** (`render/BlockEditor.tsx`) — uncontrolled textarea, composition-guarded
+  commit, 400 ms idle, Enter to split, Backspace-at-start to merge, cluster-wise ArrowLeft.
+- **Import** (`features/io/import.ts`) — blank-line splitting, one transaction for the whole file.
+- **Icons and CI** — PNG icons at 192/512/maskable/180; CI runs typecheck, unit, build and e2e.
+
+**Tests: 143 unit + 6 e2e + 5 perf, all passing.**
+
+## Measured performance
+
+Against the 80,022-word / 1,563-block synthetic Malayalam corpus, in this container. Treat as a
+regression baseline, not an absolute — re-measure on the same machine when comparing.
+
+| Metric | Budget | Measured |
+|---|---|---|
+| Cold open | < 1.5 s | **145 ms** |
+| Keystroke handler | < 16 ms | **1.05 ms** median, 1.88 ms p95 |
+| Frame interval while typing | < 33 ms p95 | **18.1 ms** |
+| Scroll frame interval | < 33 ms p95 | **17.6 ms** p95, 19.2 ms worst |
+| Memory after full scroll | < 150 MB | **3.6 MB** |
+| Blocks in DOM | — | **12** of 1,563 |
+
+Headroom is large enough that Phases 4-7 can afford real work — but signals (Phase 4) are the
+first thing that will eat into the typing path, so re-run `npm run test:perf` when adding them.
 
 ## What does not work yet
 
-- **No editor.** No block rendering, no virtualisation, no typing. Phase 2.
-- **No fonts bundled.** `scripts/subset-fonts.sh` exists with the correct flags, but the font
-  files themselves land in Phase 3.
-- **Icons are SVG only.** `public/icons/icon.svg` is used for both the manifest and
-  `apple-touch-icon`. **iOS needs PNG for a proper home-screen icon**, so install on iOS will look
-  wrong until PNGs are generated. This matters more than it sounds: home-screen installation is
-  what improves eviction odds on iOS (ADR-0013).
-- **No e2e or perf tests yet.** Playwright is configured with `e2e` and `perf` projects and the
-  corpus exists, but no specs are written — there is nothing to drive until Phase 2.
-- **Service worker asset list is hand-maintained.** Fine for a shell of four files; Phase 8
-  replaces it with a build-generated precache manifest.
-- **`Intl.Segmenter` cursor operations are not built.** Only counting is. Grapheme-aware cursor
-  movement, selection and the tap-to-caret mapping are Phase 2/3.
+- **No fonts bundled.** `scripts/subset-fonts.sh` has the correct flags; the files land in Phase 3.
+  Text currently renders in whatever the device has, which is what ADR-0019 exists to prevent.
+- **No search.** `text/search.ts` does not exist yet (Phase 3, ADR-0015).
+- **No signals, resume, margin bar, minimap, ghost markers, time-lapse, or corpus export.**
+  Phases 4-7. Nothing is stubbed — an empty button is worse than an absent one.
+- **No cross-block selection**, by design (ADR-0011). The mitigations named there — range-select
+  mode and copy affordances — are **not built yet**. This is the one accepted-limitation ADR whose
+  mitigation is still outstanding.
+- **Deleted blocks are dropped from the index**, so merging two blocks leaves a soft-deleted
+  record with no seam rendered. Ghost markers are Phase 6; the data is already there.
+- **Service worker asset list is hand-maintained.** Phase 8 generates it.
+- **`memory` perf test needs cross-origin isolation**, supplied by `vite.config.ts` `preview.headers`.
+  It will silently skip if those headers are ever removed.
 
 ## The next three tasks
 
-1. **Block rendering with TanStack Virtual** (`src/render/DocumentView.tsx`, `BlockRow.tsx`).
-   Read-only rows, dynamic measurement, height cache keyed by `blockId` + viewport width. Seed
-   from the corpus via `scripts/seed-db.ts` (not written yet — bulk-insert with
-   `generateNKeysBetween`, do NOT chain `insertBlock` 1,563 times).
+1. **Bundle Manjari** (Phase 3). Fetch the OFL font, run `npm run fonts:subset`, add `@font-face`
+   and the licence text to `public/fonts/`. **Read ADR-0019 first** — the default subsetter
+   settings strip GSUB and break every conjunct. Add the shaping assertion the script's closing
+   message refers to; it does not exist yet.
 
-2. **The focused editor** (`src/render/BlockEditor.tsx`) — the hard part of Phase 2. Swap a
-   read-only div for an editable field on tap, land the caret where the finger went via
-   `caretPositionFromPoint` / `caretRangeFromPoint`, snap to a grapheme boundary, and commit on
-   `compositionend` + 400 ms idle. **Read ADR-0010 before starting.**
+2. **Search** (`src/text/search.ts`, `src/features/search/`). Cursor over the `blocks` store,
+   normalising both sides through `normalizeForCompare`. Never touch the DOM (ADR-0015). The
+   chillu fold is what makes this find words the reader can see.
 
-3. **The perf suite** (`tests/perf/`) — cold open, scroll fps, keystroke latency, memory, against
-   the 80k corpus. Budgets in `docs/PERFORMANCE.md`. Write these as Phase 2 lands, not after;
-   they are the only thing standing between this and an editor that dies at 50k words.
+3. **Signals** (Phase 4). Capture with the attention model in ADR-0017 — visibility, 60 s idle
+   cutoff, centre weighting, 1 s settle — batched on a 2 s flush. **Check `isComposing` in every
+   keystroke handler**, or hesitation and backspace density are nonsense on IME input. Re-run the
+   perf suite afterwards; this is the first feature that competes with typing.
 
 ## Traps a fresh session will fall into
 
+**Activate the editor on `click`, never `pointerdown`.** This cost real debugging time in Phase 2.
+Swapping the read-only div for a textarea on pointerdown mounts and focuses the field, and then
+the browser finishes the gesture it already started: the following mousedown's default action
+moves focus away from the field we just focused. The editor mounts and blurs inside one gesture,
+so the tap appears to do nothing. Waiting for `click` means that default action has already run.
+Click is still a user gesture, so the mobile keyboard opens. See the comment in `BlockRow.tsx`.
+
+**`.block-row` and `.block-editor` must render text identically.** Any difference in font, size,
+line-height, padding or width makes text jump at the moment of tapping — exactly when the reader
+is looking at it. The two CSS rules are deliberately adjacent in `theme.css` so they cannot drift.
+
 **The `blocks` table looks like normal mutable state. It is not.** It is a projection, written
-only by `fold()` inside the append transaction, alongside the `lastAppliedSeq` watermark. Calling
-`db.blocks.put()` from anywhere outside `core/events.ts` breaks the guarantee that makes crash
-safety work, and it will not fail any test you have written. See ADR-0008.
+only by `fold()` inside the append transaction alongside the `lastAppliedSeq` watermark. Calling
+`db.blocks.put()` outside `core/events.ts` breaks crash safety and fails no test you have written.
+See ADR-0008. (`features/io/import.ts` is a sanctioned exception and says so.)
 
-**`Block.order` is a string.** The original brief said `number`, and float midpoints exhaust f64
-precision after ~50 sequential inserts at the same position — an ordinary afternoon of writing,
-after which block order silently corrupts. `tests/unit/fold.test.ts` does 500 of them. Compare
-lexicographically; never sort numerically. See ADR-0007.
+**`Block.order` is a string.** Float midpoints exhaust f64 precision after ~50 sequential inserts
+at one position — an ordinary afternoon of writing. Compare lexicographically. See ADR-0007.
 
-**`prevText` is usually absent, and that is correct.** It is derivable from the previous event for
-the same block. Do not "fix" the missing field — that doubles the log. `delete` events are the
-exception and always carry full text. See ADR-0012.
+**`prevText` is usually absent, and that is correct.** Derivable from the previous event for the
+same block. Populating it doubles the log. `delete` events are the exception. See ADR-0012.
 
-**NFC does not solve chillu.** Atomic chillu (U+0D7B) and its ZWJ sequence are deliberately *not*
-canonically equivalent, so no normalisation form unifies them. `normalizeForCompare()` applies NFC
-**and** an explicit chillu fold. If you simplify it to `.normalize('NFC')` because the extra step
-looks redundant, search will silently stop matching text visible on screen. A test asserts both
-halves, so this fails loudly — leave it that way.
+**NFC does not solve chillu.** Atomic chillu (U+0D7B) and its ZWJ sequence are deliberately not
+canonically equivalent. `normalizeForCompare()` applies NFC **and** an explicit chillu fold.
+Simplify it to `.normalize('NFC')` and search silently stops matching text visible on screen. A
+test asserts both halves — leave it that way.
 
 **Normalisation is for comparison only.** Stored text keeps its original bytes so import → export
 is byte-faithful. Normalising on write silently rewrites the user's manuscript. See ADR-0014.
 
-**Do not commit while `isComposing`.** Malayalam is typed through IMEs and this is the single most
-likely source of user-visible breakage — more than grapheme handling. **Playwright cannot catch
-it**, because synthetic `input` events do not produce real composition sessions. See ADR-0010 and
-the manual checklist at the end of `docs/MALAYALAM.md`.
+**Do not commit while `isComposing`.** The single most likely source of user-visible breakage,
+more than grapheme handling. **Playwright cannot catch it** — synthetic input events carry no
+composition session. See ADR-0010 and the manual checklist in `docs/MALAYALAM.md`, which has not
+been run on real devices yet.
 
-**`ts` never orders anything.** Wall clocks move backwards. Order by `(seq, deviceId)` through the
-comparator in `core/order.ts`. There is a test asserting an event with an earlier `ts` but a later
-`seq` still sorts later.
+**Do not measure "keystroke to paint" by waiting for `requestAnimationFrame`.** rAF is quantised
+to the display refresh, so that reports ~16.7 ms however fast the handler is — it looks like a
+failing budget and is a broken ruler. Measure the synchronous handler cost and, separately,
+whether frames are dropped while typing. `tests/perf/budgets.spec.ts` does both.
 
-**`core/` must not import React or the DOM.** That purity is what lets replay run in a Worker and
-what makes the fold testable. Easy to break with a convenience import; nothing fails immediately.
+**`ts` never orders anything.** Wall clocks move backwards. Order by `(seq, deviceId)`.
+
+**`core/` must not import React or the DOM.** That purity lets replay run in a Worker.
 
 **Restore semantics differ from insert.** An `insert` naming an existing soft-deleted block is a
-restore. An absent `afterBlockId` means "append at end" for a fresh insert but "put it back where
-it was" for a restore. Both are the useful default for their case; the asymmetry is deliberate and
-tested.
+restore. Absent `afterBlockId` means "append at end" for a fresh insert but "put it back where it
+was" for a restore. Deliberate, and tested.
 
-**Do not seed the corpus through `insertBlock`.** 1,563 sequential transactions will take minutes.
-Use `generateNKeysBetween` and bulk-insert — that is what it is for.
+**Playwright needs `PLAYWRIGHT_CHROMIUM_PATH`** in this container — the preinstalled Chromium
+build (1194) does not match the one this Playwright version wants (1234). Set it to
+`/opt/pw-browsers/chromium`. CI installs its own browser and leaves it unset.
 
 ## Decisions already made — do not relitigate
 
-All 23 are in `DECISIONS.md` with alternatives and consequences. The twelve that departed from the
-original brief, because a fresh session reading the brief will notice the difference:
+All 23 are in `DECISIONS.md`. The twelve that departed from the original brief:
 
 | ADR | Departure |
 |---|---|
-| 0007 | `order` is a string; float midpoints silently corrupt after ~50 same-position inserts |
+| 0007 | `order` is a string; float midpoints corrupt after ~50 same-position inserts |
 | 0008 | Projection written in the same transaction as the event, with a watermark |
 | 0009 | Snapshots serve time travel, not cold open; logarithmic retention ladder |
 | 0010 | IME composition guard — absent from the brief entirely |
 | 0011 | Cross-block selection accepted as lost, mitigated explicitly |
 | 0012 | `prevText` omitted when derivable; corpus compaction at export |
 | 0013 | Eviction handling and scheduled backups moved to Phase 1 |
-| 0014 | Normalise for comparison, preserve bytes for round trip (brief was self-contradictory) |
+| 0014 | Normalise for comparison, preserve bytes for round trip |
 | 0017 | Dwell gated by an attention model |
 | 0019 | One bundled font; layout features preserved through subsetting |
 | 0021 | Minimap buckets by max intensity, not per-block ticks |
 | 0022 | Haptics are Android-only; `navigator.vibrate` does not exist on iOS Safari |
 | 0023 | Resume strip order fixed; preference learned as default, not layout |
 
-## One correction made during Phase 1
+## Corrections made so far
 
-ADR-0009 originally claimed the retention ladder kept "any point in history within a bounded number
-of events of an anchor". Writing the test showed that is not what it does — the oldest anchors are
-dropped, so an early target replays from empty. The real guarantee is better and is now stated in
-the ADR, in `ARCHITECTURE.md` and in the module comment: **reconstructing any past state never
-replays more events than lie between that state and the present.** Early targets need no anchor
-because replaying them from empty is bounded by their own position. Asserted across log sizes of
-5k, 50k and 200k events.
+**Phase 1 — ADR-0009.** Originally claimed the retention ladder kept any point in history within a
+bounded number of events of an anchor. The test showed otherwise: the oldest anchors are dropped,
+so an early target replays from empty. The real guarantee is better and now stated everywhere —
+**reconstructing any past state never replays more events than lie between it and the present.**
+
+**Phase 1 — `docs/PERFORMANCE.md`** claimed a breached budget was "a failing build" while no CI
+existed. CI now exists, and the doc says which suites run where and why perf is excluded.
 
 ## Conventions
 
-`CLAUDE.md` — commit style, test requirements, the non-negotiable rules. Read it before writing
-code.
+`CLAUDE.md` — commit style, test requirements, the non-negotiable rules. Read before writing code.

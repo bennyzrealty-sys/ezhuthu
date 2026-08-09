@@ -57,7 +57,8 @@ Requires Node 20.19+ (22 recommended, see `.nvmrc`).
 
 ## Performance budgets
 
-These are enforced by `tests/perf`, not vibes. A change that breaks one is a failing build.
+These are enforced by `tests/perf`, not vibes. See the measured numbers under
+[Current status](#current-status).
 
 | Metric | Budget |
 |---|---|
@@ -66,12 +67,25 @@ These are enforced by `tests/perf`, not vibes. A change that breaks one is a fai
 | Keystroke to paint | < 16 ms |
 | Memory, 100k-word document | < 150 MB |
 
+Typecheck, unit tests, build and e2e run in CI on every pull request. The perf suite runs locally
+only — shared CI runners have noisy CPU, and a budget that fails at random teaches everyone to
+ignore red builds. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+
 ## Current status
 
-**Phase 1 — Foundation complete.** Scaffold, documentation, Dexie schema, event log,
-snapshot/replay, storage persistence and backups, and 105 unit tests including the fold
-equivalence property. There is no editor yet — that is Phase 2. The current screen exercises the
-event log and the durability layer underneath it.
+**Phase 2 — Editing complete.** On top of the Phase 1 foundation: virtualised block rendering,
+tap-to-focus editing with an IME-safe commit path, Enter/Backspace split and merge, plain-text
+import, and the performance suite.
+
+Measured against the 80,022-word synthetic Malayalam corpus, every budget has headroom:
+
+| Metric | Budget | Measured |
+|---|---|---|
+| Cold open | < 1.5 s | **145 ms** |
+| Keystroke handler | < 16 ms | **1.05 ms** median, 1.88 ms p95 |
+| Scroll frame interval | < 33 ms p95 | **17.6 ms** p95 |
+| Memory | < 150 MB | **3.6 MB** |
+| Blocks in the DOM | — | **12** of 1,563 |
 
 Build order and per-phase state live in [`HANDOFF.md`](HANDOFF.md), which is updated at the end
 of every working session. Read it first if you are picking this up cold.
@@ -79,7 +93,7 @@ of every working session. Read it first if you are picking this up cold.
 | Phase | What | State |
 |---|---|---|
 | 1 | Foundation — log, fold, replay, persistence, backups | **done** |
-| 2 | Editing — block model, virtualised list, focused-block editing | not started |
+| 2 | Editing — block model, virtualised list, focused-block editing | **done** |
 | 3 | Malayalam — segmentation, normalisation, fonts, search | not started |
 | 4 | Signals — attention telemetry | not started |
 | 5 | Resume — the four-destination strip | not started |
