@@ -12,7 +12,15 @@ of every working session — if it is stale, that is a bug.
 **Phases 1 and 2 complete.** The event log and its durability layer work, and there is a working
 editor on top of them: a 1,563-block document renders, scrolls at frame rate, and is editable.
 
-Branch: `claude/ezhuthu-editor-setup-10tfbg`. Every phase ships as its own PR.
+**Phases 1-2 were merged to `main` via PR #1.** That PR is closed — do not add commits to
+`claude/ezhuthu-editor-setup-10tfbg` expecting them to land there. Start Phase 3 from a fresh
+branch off `main`:
+
+```bash
+git fetch origin main && git checkout -B <new-branch> origin/main
+```
+
+Every phase ships as its own PR.
 
 ## What works
 
