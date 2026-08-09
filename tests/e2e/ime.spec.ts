@@ -85,10 +85,17 @@ test('the composed text is committed intact', async ({ page }) => {
   // Still correct after a reload — so what landed in storage is the resolved
   // text, not a half-formed composition buffer.
   await page.reload();
-  const text = await page.locator('.block-row').first().textContent();
-  expect(text).toContain('അവൻ');
+
+  /*
+   * toContainText, not textContent(): a row mounts before its text arrives
+   * (DocumentView fetches text by window, after the index) and renders blank
+   * until it does. A one-shot read wins on an idle machine and loses on a busy
+   * one, which is a test that reports flakiness as breakage.
+   */
+  const first = page.locator('.block-row').first();
+  await expect(first).toContainText('അവൻ');
   // The atomic chillu survived; it was not split back into ന + virama + ZWJ.
-  expect(text).not.toContain('‍');
+  expect(await first.textContent()).not.toContain('‍');
 });
 
 test('composition does not corrupt text already in the block', async ({ page }) => {
