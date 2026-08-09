@@ -95,8 +95,8 @@ The signals exist to serve two features. Nothing is collected speculatively.
 
 | Destination | Query |
 |---|---|
-| Last edited | most recent `update` event |
-| Last read | furthest scroll position from last session |
+| Last edited | most recently updated block with `revisionCount > 0` |
+| Last read | deepest block that accrued dwell last session (ADR-0026) |
 | Longest dwelled | highest gated dwell in the last session |
 | Most rewritten | highest `revisionCount` in a recent window |
 
