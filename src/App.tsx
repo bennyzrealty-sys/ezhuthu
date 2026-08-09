@@ -83,9 +83,23 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement | null>(null);
   const view = useRef<DocumentViewHandle | null>(null);
 
+  /*
+   * Last call wins. Two status loads overlap on the ordinary import path — the
+   * one this component fires on mount and the one the import fires when it
+   * finishes — and on a large document the first is the slower of the two,
+   * because it walks the log to check the projection. Without a ticket its
+   * result lands last and the toolbar reports the document as it was BEFORE
+   * the import: "0 words · 0 blocks" over 80,000 words that are on screen, with
+   * no further refresh coming to correct it.
+   */
+  const loadTicket = useRef(0);
+
   const refresh = useCallback(() => {
+    const ticket = ++loadTicket.current;
     loadStatus()
-      .then(setStatus)
+      .then((fresh) => {
+        if (ticket === loadTicket.current) setStatus(fresh);
+      })
       .catch((error: unknown) =>
         setMessage(error instanceof Error ? error.message : String(error)),
       );
