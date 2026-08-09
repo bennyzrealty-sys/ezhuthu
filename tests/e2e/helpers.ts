@@ -74,6 +74,44 @@ export async function importCorpusFile(page: Page, path: string): Promise<void> 
   await expect(page.locator('.block-row, .block-editor').first()).toBeVisible({ timeout: 120_000 });
 }
 
+export interface SignalRow {
+  blockId: string;
+  kind: string;
+  value: number;
+  sessionId: string;
+  ts: number;
+}
+
+/**
+ * Read the `signals` store straight from IndexedDB.
+ *
+ * Through a second connection rather than through the app, for the same reason
+ * `countEvents` does: what the app believes it queued is not evidence that a
+ * batch was written, and the batch is the part that has to survive.
+ */
+export async function readSignals(page: Page): Promise<SignalRow[]> {
+  return page.evaluate(async () => {
+    const request = indexedDB.open('ezhuthu');
+    const db: IDBDatabase = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const rows: SignalRow[] = await new Promise((resolve, reject) => {
+      const r = db.transaction('signals').objectStore('signals').getAll();
+      r.onsuccess = () => resolve(r.result as SignalRow[]);
+      r.onerror = () => reject(r.error);
+    });
+    db.close();
+    return rows;
+  });
+}
+
+/** Total value of one kind of signal, over every block. */
+export async function signalTotal(page: Page, kind: string): Promise<number> {
+  const rows = await readSignals(page);
+  return rows.filter((r) => r.kind === kind).reduce((sum, r) => sum + r.value, 0);
+}
+
 /**
  * Count rows in the event log, read straight from IndexedDB.
  *

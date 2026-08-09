@@ -30,6 +30,7 @@ import { HeightCache } from './measure';
 import { caretOffsetFromPoint } from './caret';
 import { BlockRow } from './BlockRow';
 import { BlockEditor } from './BlockEditor';
+import { SignalCollector } from '../signals/collector';
 
 /** Blocks rendered beyond the viewport on each side. */
 const OVERSCAN = 6;
@@ -74,6 +75,7 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
   const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [loading, setLoading] = useState(true);
   const [highlight, setHighlight] = useState<RevealTarget | null>(null);
+  const [signals, setSignals] = useState<SignalCollector | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const heights = useRef(new HeightCache());
@@ -263,6 +265,35 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
   }, [virtualizer]);
 
   // -------------------------------------------------------------------------
+  // Attention telemetry
+  // -------------------------------------------------------------------------
+
+  /*
+   * The collector needs the scroll element, which does not exist on the first
+   * render: a loading or empty document renders a placeholder instead. `ready`
+   * is what this waits for, rather than mount.
+   *
+   * Everything it does is on a timer or a passive listener. The only part the
+   * editor touches is `signals.typing`, and only from handlers that already
+   * run — see signals/collector.ts.
+   */
+  const ready = !loading && index.length > 0;
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element === null) return;
+
+    const collector = new SignalCollector(db, docId, element);
+    setSignals(collector);
+
+    return () => {
+      setSignals(null);
+      // Takes a final sample and flushes; failures are swallowed inside.
+      void collector.stop();
+    };
+  }, [db, docId, ready]);
+
+  // -------------------------------------------------------------------------
   // Editing
   // -------------------------------------------------------------------------
 
@@ -429,6 +460,7 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
                   onMergeBack={(id, value) => void mergeBack(id, value)}
                   onBlur={(id, value) => void blur(id, value)}
                   onHeight={reportHeight}
+                  typing={signals?.typing}
                 />
               ) : (
                 <BlockRow

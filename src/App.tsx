@@ -21,6 +21,7 @@ import {
   type BackupStatus,
   type PersistenceState,
 } from './db/persistence';
+import { pruneSignals } from './signals/queries';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -91,6 +92,26 @@ export default function App() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  /*
+   * Signals older than the retention window have no reader — the queries ask
+   * about the last session and a recent window — and they accumulate for as
+   * long as the app is used. Deleted rather than kept, because unlike the
+   * document they are telemetry about the work and not the work itself
+   * (docs/SIGNALS.md).
+   *
+   * After the first status load, not alongside it. Maintenance on a store
+   * nobody is waiting for has no business competing with opening the document,
+   * which on a 100k-word log is already a projection check and a head-seq read.
+   * Not awaited and not surfaced either: a failure here must change nothing the
+   * writer sees.
+   */
+  const pruned = useRef(false);
+  useEffect(() => {
+    if (status === null || pruned.current) return;
+    pruned.current = true;
+    void pruneSignals(db).catch(() => undefined);
+  }, [status]);
 
   const onImport = useCallback(
     async (file: File) => {
