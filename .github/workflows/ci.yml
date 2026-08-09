@@ -35,7 +35,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run corpus:generate
+      # `npm run test:e2e` is scoped to --project=e2e. Running bare
+      # `playwright test` here would also run the perf project, which is
+      # deliberately excluded from CI (see the note at the end of this file).
+      # The e2e suite builds its own fixtures inline, so no corpus is needed.
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()

@@ -11,7 +11,7 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --project=e2e",
     "test:perf": "playwright test --project=perf",
     "corpus:generate": "tsx scripts/generate-corpus.ts",
     "fonts:subset": "bash scripts/subset-fonts.sh",

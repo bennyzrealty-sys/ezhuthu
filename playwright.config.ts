@@ -23,7 +23,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? 'github' : 'list',
+  // The `github` reporter annotates the PR but writes no files, so on its own
+  // the failure-artifact upload has nothing to collect.
+  reporter: process.env.CI
+    ? [['github'], ['html', { open: 'never' }]]
+    : [['list']],
   use: {
     baseURL: 'http://localhost:4173',
     trace: 'on-first-retry',

@@ -193,14 +193,21 @@ test('memory stays within budget after a full scroll pass', async ({ page }) => 
   const bytes = await page.evaluate(async () => {
     const api = (performance as { measureUserAgentSpecificMemory?: () => Promise<{ bytes: number }> })
       .measureUserAgentSpecificMemory;
-    if (typeof api !== 'function') return null;
-    return (await api.call(performance)).bytes;
+    // The method EXISTS without cross-origin isolation and throws SecurityError
+    // when called, so checking for it is not enough — the call itself has to be
+    // guarded. `crossOriginIsolated` is supplied by preview.headers in
+    // vite.config.ts; if those are ever removed this skips instead of failing.
+    if (typeof api !== 'function' || !globalThis.crossOriginIsolated) return null;
+    try {
+      return (await api.call(performance)).bytes;
+    } catch {
+      return null;
+    }
   });
 
   if (bytes === null) {
-    // Needs cross-origin isolation, which the preview server does not set.
-    // Reported rather than silently skipped, so the gap is visible.
-    console.log('memory: measureUserAgentSpecificMemory unavailable — not measured');
+    // Reported rather than silently skipped, so the gap stays visible.
+    console.log('memory: measureUserAgentSpecificMemory unavailable — NOT MEASURED');
     test.skip();
     return;
   }
