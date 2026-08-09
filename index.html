@@ -9,8 +9,13 @@
     <meta name="theme-color" content="#111111" />
     <meta name="description" content="എഴുത്ത് — offline-first long-form editor for Malayalam and English" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icons/icon.svg" />
-    <link rel="apple-touch-icon" href="/icons/icon.svg" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png" />
+    <!-- iOS ignores the manifest here and requires PNG. Given an SVG it
+         screenshots the page instead, which makes the home-screen install
+         look broken — and installing is what improves eviction odds on iOS
+         (ADR-0013). -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>എഴുത്ത് · ezhuthu</title>

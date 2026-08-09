@@ -1,7 +1,13 @@
 # Performance
 
-"It feels fast" is not evidence. These budgets are enforced by `tests/perf` and a breach is a
-failing build.
+"It feels fast" is not evidence. These budgets are enforced by `tests/perf`.
+
+**Where they run.** Typecheck, unit tests, build and e2e run in CI on every pull request
+(`.github/workflows/ci.yml`). The **performance suite deliberately does not.** GitHub's shared
+runners have noisy, unpredictable CPU, so frame timings and cold-open measurements taken there are
+not comparable between runs — and a budget that fails at random teaches everyone to ignore red
+builds, which is worse than not measuring. Run the perf suite locally on a consistent machine and
+put the numbers in the commit body.
 
 ## Budgets
 

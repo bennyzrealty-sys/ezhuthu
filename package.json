@@ -14,7 +14,8 @@
     "test:e2e": "playwright test",
     "test:perf": "playwright test --project=perf",
     "corpus:generate": "tsx scripts/generate-corpus.ts",
-    "fonts:subset": "bash scripts/subset-fonts.sh"
+    "fonts:subset": "bash scripts/subset-fonts.sh",
+    "icons:generate": "tsx scripts/generate-icons.ts"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.12",
