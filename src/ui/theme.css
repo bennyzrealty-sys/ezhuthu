@@ -1,0 +1,320 @@
+/*
+ * Phase 1 shell styling. The real typographic work — bundled Manjari, line
+ * measure, the margin intensity bar — arrives with Phases 2, 3 and 6.
+ */
+
+:root {
+  --bg: #f7f5f1;
+  --surface: #ffffff;
+  --ink: #16150f;
+  --ink-muted: #5d5a50;
+  --rule: #dedad1;
+  --accent: #b8502a;
+  --ok: #2f6b45;
+  --warn: #8a5a00;
+  --danger: #a32d1f;
+
+  --measure: 34rem;
+  --radius: 10px;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14130f;
+    --surface: #1c1b16;
+    --ink: #eeece4;
+    --ink-muted: #a09c90;
+    --rule: #2e2c25;
+    --accent: #e8865c;
+    --ok: #6fbf8e;
+    --warn: #e0b053;
+    --danger: #ef7f6d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+.app {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem calc(2rem + env(safe-area-inset-bottom));
+}
+
+.app h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.25rem;
+  letter-spacing: -0.01em;
+}
+
+.app .lede {
+  color: var(--ink-muted);
+  margin: 0 0 1.75rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+}
+
+.card h2 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  margin: 0 0 0.6rem;
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.3rem 0;
+}
+
+.row dt {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+dl {
+  margin: 0;
+}
+
+.state-ok {
+  color: var(--ok);
+}
+.state-warn {
+  color: var(--warn);
+}
+.state-danger {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 44px;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.note {
+  font-size: 0.9rem;
+  color: var(--ink-muted);
+  margin: 0.75rem 0 0;
+}
+
+.phase-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phase-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.phase-list li:last-child {
+  border-bottom: 0;
+}
+
+.phase-list .done {
+  color: var(--ok);
+}
+
+.phase-list .todo {
+  color: var(--ink-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   Document
+   --------------------------------------------------------------------------- */
+
+.doc-scroll {
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Keeps the virtualiser's absolutely-positioned children in its own layer
+     rather than promoting the whole document. */
+  contain: strict;
+  -webkit-overflow-scrolling: touch;
+}
+
+.doc-inner {
+  position: relative;
+  width: 100%;
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.doc-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 0 1rem;
+}
+
+/*
+ * A read-only row and the focused editor MUST render text identically. Any
+ * difference in font, size, line-height, padding or width makes the text jump
+ * at the moment of tapping — which is precisely when the reader is looking at
+ * it. These two rules are deliberately kept adjacent so they cannot drift.
+ */
+.block-row,
+.block-editor {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.35rem 0;
+  border: 0;
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  letter-spacing: 0;
+  color: var(--ink);
+  background: transparent;
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.block-row {
+  cursor: text;
+  min-height: 1.75em;
+  /* The row is a button for accessibility; it must not look like one. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+.block-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.block-editor {
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  /* iOS zooms the viewport when a field's text is under 16px. */
+  font-size: max(1.0625rem, 16px);
+}
+
+.block-editor:focus {
+  /* No focus ring: the caret already says where you are, and a box around the
+     paragraph fights the reading experience. */
+  outline: none;
+}
+
+.doc-empty {
+  padding: 3rem 1.5rem;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.doc-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-top));
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.doc-toolbar .spacer {
+  flex: 1;
+}
+
+.doc-toolbar .stat {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-toolbar button {
+  min-height: 36px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.9rem;
+}
+
+.doc-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+.doc-layout .doc-scroll {
+  flex: 1;
+  height: auto;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

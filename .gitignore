@@ -1,0 +1,32 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# Generated fixtures — regenerate with `npm run corpus:generate`
+tests/fixtures/generated/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.swp
+
+# Build info
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel
