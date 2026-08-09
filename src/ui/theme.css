@@ -456,3 +456,105 @@ mark,
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------------------
+   Resume strip (ADR-0023)
+   --------------------------------------------------------------------------- */
+
+.resume-strip {
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  padding: 0.6rem 1rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.resume-strip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.resume-title {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+}
+
+/*
+ * A row that scrolls sideways rather than wrapping. Wrapping would let the
+ * four slots reflow into two lines at one width and one line at another, so a
+ * destination's position would depend on the viewport — the same instability
+ * ADR-0023 refuses in the reordering it rejected.
+ */
+.resume-slots {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding-bottom: 0.15rem;
+}
+
+.resume-slot {
+  flex: 0 0 min(15rem, 72vw);
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: flex-start;
+  text-align: start;
+  min-height: 44px;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: inherit;
+}
+
+.resume-slot:disabled {
+  opacity: 0.45;
+}
+
+/* Emphasis, not position: this is the whole of what the strip learns. */
+.resume-slot.is-default {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.resume-label {
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+
+.resume-badge {
+  color: var(--accent);
+}
+
+/*
+ * The excerpt is the only part a reader actually reads, so it is set in the
+ * document face — a paragraph should be recognisable here as the same
+ * paragraph it is on the page.
+ */
+.resume-excerpt {
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.resume-detail {
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.resume-dismiss {
+  align-self: flex-start;
+  min-height: 36px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+}
