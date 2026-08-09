@@ -1,0 +1,41 @@
+{
+  "name": "ezhuthu",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Offline-first PWA for writing very long documents in Malayalam and English",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:perf": "playwright test --project=perf",
+    "corpus:generate": "tsx scripts/generate-corpus.ts",
+    "fonts:subset": "bash scripts/subset-fonts.sh"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.13.12",
+    "dexie": "^4.2.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^22.18.1",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "fake-indexeddb": "^6.2.2",
+    "jsdom": "^27.0.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}
