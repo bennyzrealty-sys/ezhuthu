@@ -43,6 +43,18 @@ export default defineConfig({
       testDir: 'tests/perf',
       use: { ...devices['Pixel 7'], ...launchOptions },
       timeout: 180_000,
+      /*
+       * Serial. The top-level `fullyParallel` runs these two at a time, so
+       * each budget was measured against a machine that was simultaneously
+       * running another budget — a scroll test competing with a memory test
+       * for the same four cores. That inflates every number by an amount that
+       * varies with which pair happened to overlap, which is exactly the
+       * unreproducibility this suite is excluded from CI to avoid.
+       *
+       * Playwright parallelises by file when this is off, and the budgets are
+       * one file, so this makes the whole suite serial.
+       */
+      fullyParallel: false,
     },
   ],
   webServer: {
