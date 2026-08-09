@@ -66,6 +66,7 @@ These are enforced by `tests/perf`, not vibes. See the measured numbers under
 | Scroll | sustained 60 fps |
 | Keystroke to paint | < 16 ms |
 | Memory, 100k-word document | < 150 MB |
+| Search, whole document | < 250 ms scan |
 
 Typecheck, unit tests, build and e2e run in CI on every pull request. The perf suite runs locally
 only — shared CI runners have noisy CPU, and a budget that fails at random teaches everyone to
@@ -73,18 +74,19 @@ ignore red builds. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Current status
 
-**Phase 2 — Editing complete.** On top of the Phase 1 foundation: virtualised block rendering,
-tap-to-focus editing with an IME-safe commit path, Enter/Backspace split and merge, plain-text
-import, and the performance suite.
+**Phase 3 — Malayalam complete.** On top of Phases 1 and 2: Manjari bundled and subset with its
+shaping tables intact, and in-app search that runs as a cursor over the store, folding chillu so
+it finds words the reader can see rather than only the byte sequence they happen to be stored as.
 
 Measured against the 80,022-word synthetic Malayalam corpus, every budget has headroom:
 
 | Metric | Budget | Measured |
 |---|---|---|
-| Cold open | < 1.5 s | **145 ms** |
-| Keystroke handler | < 16 ms | **1.05 ms** median, 1.88 ms p95 |
-| Scroll frame interval | < 33 ms p95 | **17.6 ms** p95 |
-| Memory | < 150 MB | **3.6 MB** |
+| Cold open | < 1.5 s | **138–163 ms** |
+| Keystroke handler | < 16 ms | **0.86 ms** median, 1.22 ms p95 |
+| Scroll frame interval | < 33 ms p95 | **17.0 ms** p95 |
+| Memory | < 150 MB | **3.7 MB** |
+| Search, whole-document miss | < 250 ms | **~88 ms** scan |
 | Blocks in the DOM | — | **12** of 1,563 |
 
 Build order and per-phase state live in [`HANDOFF.md`](HANDOFF.md), which is updated at the end
@@ -94,7 +96,7 @@ of every working session. Read it first if you are picking this up cold.
 |---|---|---|
 | 1 | Foundation — log, fold, replay, persistence, backups | **done** |
 | 2 | Editing — block model, virtualised list, focused-block editing | **done** |
-| 3 | Malayalam — segmentation, normalisation, fonts, search | not started |
+| 3 | Malayalam — segmentation, normalisation, fonts, search | **done** |
 | 4 | Signals — attention telemetry | not started |
 | 5 | Resume — the four-destination strip | not started |
 | 6 | Visibility — margin bar, decay, minimap, haptics, ghost markers | not started |
@@ -132,7 +134,11 @@ additional scripts. Designed for; not built.
 
 MIT.
 
-Fonts are not bundled yet — they arrive in Phase 3. Manjari will ship as the default and Noto
-Sans Malayalam as an optional download, both under the SIL Open Font License 1.1, with their
-licence text alongside them in `public/fonts/`. See [ADR-0019](DECISIONS.md) for why only one is
-bundled, and `scripts/subset-fonts.sh` for the subsetting flags that keep conjuncts working.
+[Manjari](https://gitlab.com/smc/fonts/manjari) is bundled under the SIL Open Font License 1.1,
+with its licence text alongside it in `public/fonts/OFL.txt`. It ships as a 72 KB woff2 subset
+covering the Malayalam block, Latin-1 and the joiners, with all layout features preserved — see
+[ADR-0019](DECISIONS.md) for why only one face is bundled, [ADR-0024](DECISIONS.md) for what
+actually breaks Malayalam subsetting, and `scripts/subset-fonts.sh` to rebuild it.
+
+Noto Sans Malayalam remains an optional face for a reader who prefers it; it is not bundled and
+the download flow is not built.
