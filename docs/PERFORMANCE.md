@@ -17,6 +17,7 @@ put the numbers in the commit body.
 | Scroll | **sustained 60 fps** | Below this, navigating a long document feels broken on touch. |
 | Keystroke to paint | **< 16 ms** | One frame. Above it, typing feels laggy — the worst failure this app could have. |
 | Memory, 100k words | **< 150 MB** | Mid-range Android reclaims background tabs above roughly this. Exceeding it means the app is killed while the writer is in another app, and re-opening costs a cold start. |
+| Search, whole document | **< 250 ms scan** | Not a frame budget — search runs on a deliberate action, not while typing or scrolling. This is the point at which ADR-0015's decision to skip a full-text index stops being defensible and the scan belongs in a Worker. |
 
 ## Running them
 
@@ -50,6 +51,17 @@ handler and render, not IME composition, which cannot be driven synthetically
 **Memory.** `performance.measureUserAgentSpecificMemory()` after a full scroll pass, which is the
 worst case because it has populated the height cache for every block.
 
+**Search.** Last keystroke → the result summary updating, via a `MutationObserver` in the page,
+driven through the real search field rather than a handle on `searchDocument` — a test-only seam
+measures a path no user takes. The figure therefore includes the panel's 180 ms debounce and the
+result render; the scan cost quoted below is the measurement minus the debounce. Three query
+shapes are measured: a miss (which scans every block, the honest worst case), a very common word,
+and one that only matches in full through the chillu fold.
+
+**Serially.** The `perf` project sets `fullyParallel: false`. Running two budgets at once meant a
+scroll measurement competed with a memory measurement for the same cores, and each number carried
+an inflation that depended on which pair overlapped.
+
 ## Why the app hits these
 
 Not accidents — each budget is met by a specific structural decision.
@@ -71,6 +83,12 @@ anything is attached to `onChange`.
 a compact index — `{blockId, order, updatedAt, revisionCount, length}`, roughly 100 bytes, so
 about 200 KB at 2,000 blocks. That index drives the minimap and the scrollbar. Text is fetched by
 range as the viewport needs it; search runs as a cursor over IndexedDB (ADR-0015).
+
+**Search** folds each block's text and looks for the needle in it, without building the map from
+folded offsets back to source offsets. That map is what lets a match be highlighted without
+bisecting a grapheme cluster, and it is the expensive half of a search because it segments the
+text — so it is built only for the blocks that matched *and* are going to be rendered. Blocks past
+the hit limit are counted, not located. Removing that distinction cost 100 ms on a common query.
 
 ## Rules that keep them met
 
