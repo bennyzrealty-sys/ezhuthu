@@ -33,9 +33,10 @@ the snapshot ladder, storage persistence, backups and restore, NFC + chillu norm
 - **The focused editor** (`render/BlockEditor.tsx`) — uncontrolled textarea, composition-guarded
   commit, 400 ms idle, Enter to split, Backspace-at-start to merge, cluster-wise ArrowLeft.
 - **Import** (`features/io/import.ts`) — blank-line splitting, one transaction for the whole file.
+- **IME composition coverage** (`tests/e2e/ime.spec.ts`) — real composition sessions via CDP.
 - **Icons and CI** — PNG icons at 192/512/maskable/180; CI runs typecheck, unit, build and e2e.
 
-**Tests: 143 unit + 6 e2e + 5 perf, all passing.**
+**Tests: 143 unit + 10 e2e + 5 perf, all passing.**
 
 ## Measured performance
 
@@ -119,9 +120,11 @@ test asserts both halves — leave it that way.
 is byte-faithful. Normalising on write silently rewrites the user's manuscript. See ADR-0014.
 
 **Do not commit while `isComposing`.** The single most likely source of user-visible breakage,
-more than grapheme handling. **Playwright cannot catch it** — synthetic input events carry no
-composition session. See ADR-0010 and the manual checklist in `docs/MALAYALAM.md`, which has not
-been run on real devices yet.
+more than grapheme handling. This IS covered now: `tests/e2e/ime.spec.ts` drives real composition
+sessions via CDP `Input.imeSetComposition`. Remove the guard and two of those tests fail, one by
+committing an EMPTY block — so do not "simplify" it away. Platform behaviour (real Gboard, iOS
+keyboards, transliteration, swipe, autocorrect) is still only covered by the manual checklist in
+`docs/MALAYALAM.md`, which has not been run on real devices.
 
 **Do not measure "keystroke to paint" by waiting for `requestAnimationFrame`.** rAF is quantised
 to the display refresh, so that reports ~16.7 ms however fast the handler is — it looks like a
@@ -169,6 +172,20 @@ so an early target replays from empty. The real guarantee is better and now stat
 
 **Phase 1 — `docs/PERFORMANCE.md`** claimed a breached budget was "a failing build" while no CI
 existed. CI now exists, and the doc says which suites run where and why perf is excluded.
+
+**Phase 2 — "composition cannot be tested".** Claimed repeatedly, in ADR-0010, in
+`docs/MALAYALAM.md` and in code comments. It was wrong: CDP's `Input.imeSetComposition` drives a
+genuine composition session in Chromium. `tests/e2e/ime.spec.ts` now covers the guard, verified by
+mutation — removing the isComposing check makes it commit an empty block. Only *platform* IME
+behaviour remains manual.
+
+**Phase 2 — CI ran the perf suite.** `npm run test:e2e` was bare `playwright test`, which runs
+every project including the one the workflow says it excludes. Missed because the script was never
+invoked by hand — `--project=e2e` always was. Scoped now.
+
+**Phase 2 — the memory probe checked existence, not availability.**
+`measureUserAgentSpecificMemory` is present without cross-origin isolation and throws when called.
+It now checks `crossOriginIsolated` and wraps the call.
 
 ## Conventions
 

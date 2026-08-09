@@ -124,9 +124,15 @@ broken-Malayalam-editor report: half-formed conjuncts committed as separate char
 jumping to the start of the field, duplicated vowel signs. **This causes more visible breakage
 than incorrect grapheme handling.**
 
-**This cannot be tested synthetically.** Playwright's `type()` dispatches `input` events without a
-real composition session. Composition correctness needs the manual checklist below, on real
-devices.
+**Partly testable, and now tested.** Playwright's `type()` dispatches `input` events with no
+composition session — but CDP's `Input.imeSetComposition` drives a *real* one in Chromium, and
+`tests/e2e/ime.spec.ts` uses it to assert that no commit lands inside a composition window and
+that composed text reaches storage intact. Removing the guard makes those tests commit an empty
+block, so they have teeth.
+
+What that still does not cover is platform behaviour: a real Gboard or iOS Malayalam keyboard,
+transliteration keyboards resolving Latin keystrokes, swipe typing, and autocorrect. The manual
+checklist below remains the only coverage for those.
 
 ## Rule 6 — Mixed script within a block is normal
 

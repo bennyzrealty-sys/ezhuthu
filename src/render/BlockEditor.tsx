@@ -13,8 +13,11 @@
  *    IMEs, and writing to or re-rendering the field mid-composition resets the
  *    IME buffer: half-formed conjuncts commit as separate characters, the
  *    caret jumps to the start, vowel signs duplicate. This causes more visible
- *    breakage than incorrect grapheme handling, and Playwright cannot catch it
- *    because synthetic input events carry no composition session.
+ *    breakage than incorrect grapheme handling.
+ *
+ *    This guard IS tested — tests/e2e/ime.spec.ts drives real composition
+ *    sessions through CDP `Input.imeSetComposition`. Removing the isComposing
+ *    check there commits an EMPTY block, so do not "simplify" it away.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';

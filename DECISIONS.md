@@ -361,8 +361,13 @@ hesitation and backspace-density measurements will be nonsense on IME input.
 
 - Commit cadence is "400 ms idle **after** composition ends", slightly lazier than specified.
 - The focused editor is uncontrolled; React must not drive its value while focused.
-- Requires real-device testing with a Malayalam IME. Synthetic `input` events in Playwright do not
-  reproduce composition, so this needs a manual test checklist — recorded in `docs/MALAYALAM.md`.
+- The guard is covered by `tests/e2e/ime.spec.ts`, which drives genuine composition sessions
+  through CDP `Input.imeSetComposition`. Verified by mutation: removing the `isComposing` check
+  makes those tests commit an empty block. (An earlier version of this ADR said composition could
+  not be tested synthetically. That was wrong — `type()` cannot produce a composition session, but
+  CDP can.)
+- Platform IME behaviour — real Gboard, iOS keyboards, transliteration keyboards, swipe typing,
+  autocorrect — is still only covered by the manual checklist in `docs/MALAYALAM.md`.
 - Signal capture must exclude composing keystrokes.
 
 ---

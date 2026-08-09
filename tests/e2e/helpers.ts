@@ -48,3 +48,26 @@ export async function importCorpusFile(page: Page, path: string): Promise<void> 
   await page.setInputFiles('[data-testid="import-input"]', path);
   await expect(page.locator('.block-row, .block-editor').first()).toBeVisible({ timeout: 120_000 });
 }
+
+/**
+ * Count rows in the event log, read straight from IndexedDB.
+ *
+ * Used to assert that an interaction appended exactly the events it should —
+ * and, for composition, that it appended none at all.
+ */
+export async function countEvents(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const request = indexedDB.open('ezhuthu');
+    const db: IDBDatabase = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const count: number = await new Promise((resolve, reject) => {
+      const r = db.transaction('events').objectStore('events').count();
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    db.close();
+    return count;
+  });
+}
