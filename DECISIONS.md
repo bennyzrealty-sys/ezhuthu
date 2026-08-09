@@ -884,3 +884,70 @@ tracked and require at least five picks before any emphasis appears.
 - The five-pick floor prevents early thrash.
 - If real use shows one destination dominating overwhelmingly, collapsing to one primary action
   with three secondary is a better answer than reordering — noted as a revisit trigger.
+
+---
+
+## ADR-0024 — Correcting ADR-0019: the subsetter's defaults are not the danger
+
+**Status:** accepted · corrects the stated premise of ADR-0019; its decision stands
+
+**Context.** ADR-0019, `scripts/subset-fonts.sh` and `docs/MALAYALAM.md` Rule 7 all asserted that
+*"pyftsubset strips layout features it does not think are needed by default"*, and that
+`--layout-features='*'` is what prevents broken conjuncts. Phase 3 ran the script for the first
+time. The claim is false, and a false reason for a correct rule is worse than no reason: the next
+person to read it either trusts the wrong mental model or, finding it wrong, discards the rule
+with it.
+
+Measured against Manjari-Regular (912 glyphs) with fontTools 4.63, subsetting to the Malayalam
+block plus Latin-1 and the joiners:
+
+| Invocation | Glyphs | GSUB features | Conjuncts |
+|---|---|---|---|
+| defaults | 811 | akhn blwf blws half haln pref pres pstf psts | **form correctly** |
+| `--layout-features='*'` | 828 | the above + aalt salt tnum zero | form correctly |
+| `--layout-features=''` | 323 | *(none)* | **broken** |
+| `--no-layout-closure` | 323 | akhn half haln pref | **broken** |
+
+pyftsubset's default `--layout-features` is a 68-tag list that already contains every feature
+Indic shaping needs, and layout closure — which retains glyphs reachable only through GSUB — is on
+by default. What `'*'` actually adds is discretionary features: alternates, tabular figures,
+slashed zero.
+
+**Decision.** Keep everything ADR-0019 decided. Change only the reason.
+
+- `--layout-features='*'` stays. It costs 17 glyphs, it is explicit, and an explicit flag cannot be
+  changed underneath us by a fontTools release. It is cheap insurance, not the load-bearing part.
+- The two invocations that genuinely break Malayalam are named in the script, and both are things
+  a person has to type deliberately: an empty or narrowed `--layout-features`, and
+  `--no-layout-closure`. The second is the quieter one — it leaves the feature list intact, so a
+  check that only reads feature tags passes while the conjunct glyphs those features substitute in
+  are gone. That is why `verify-font.py` and the unit test both assert a glyph-count floor.
+- The guarantee moves from the flags to the output. `scripts/verify-font.py` fails the subsetting
+  run, `tests/unit/fonts.test.ts` fails CI on the committed file, and `tests/e2e/fonts.spec.ts`
+  measures a conjunct against its ZWNJ-suppressed form in a real shaper.
+
+**Two clarifications of ADR-0019 while we are here.**
+
+- *One face means one face.* Only Manjari Regular is bundled. Bold would be another 72 KB of
+  precache for what is currently one word of UI chrome; the script builds it on demand.
+- *Manjari's own Latin is kept in the subset.* ADR-0019 says Latin uses the system UI font and
+  also lists `U+0000-00FF` in the codepoint range, which cannot both be true inside a block. The
+  range wins: Malayalam and English interleave within one paragraph constantly (Rule 6), and
+  switching face mid-line is more visible than the 11 KB the Latin glyphs cost. UI chrome outside
+  the document still uses the system font.
+
+**Alternatives considered.**
+
+- *Silently fix the comment.* The project keeps a "Corrections made so far" section in `HANDOFF.md`
+  precisely because a wrong claim that has been repeated in three files is itself a finding.
+- *Drop `--layout-features='*'` now that we know the default is safe.* It would be defensible and
+  saves nothing worth having. The flag documents intent at the point of use.
+- *Rely on the flags and skip the verifier.* This is what ADR-0019 effectively did, and it is how
+  the wrong reason survived from Phase 1 to Phase 3 unchallenged.
+
+**Consequences.**
+
+- The rule survives with a reason that holds up, and the two real failure modes are named.
+- Anyone re-subsetting gets a pass/fail at the point of running the script, not at the point of
+  reading a rendered page in Malayalam and wondering whether it looks right.
+- The claim "a rendering test asserts the expected shaped width" is now true; it was aspirational.
