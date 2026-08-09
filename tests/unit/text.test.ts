@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   equals,
   foldChillu,
+  foldWithOffsets,
   includes,
   normalizeForCompare,
   ZWJ,
@@ -169,5 +170,56 @@ describe('isEffectivelyEmpty', () => {
     expect(isEffectivelyEmpty('   ')).toBe(true);
     expect(isEffectivelyEmpty(ZWJ + ZWNJ)).toBe(true);
     expect(isEffectivelyEmpty('അ')).toBe(false);
+  });
+});
+
+describe('folding with offsets', () => {
+  it('agrees with folding the whole string at once', () => {
+    /*
+     * foldWithOffsets folds cluster by cluster so it can record where each
+     * piece came from. That is only sound if it produces the same answer as
+     * folding the string in one go — which holds because normalisation and
+     * case folding stay inside a grapheme cluster, not because anything
+     * guarantees it. Asserted over every documented string, so an engine whose
+     * segmentation differs is caught here rather than in a search result.
+     */
+    const samples = [
+      ATOMIC_CHILLU_N,
+      SEQUENCE_CHILLU_N,
+      COMPOSED_OO,
+      DECOMPOSED_OO,
+      'വർഷം',
+      'പാൽ',
+      'കൂൾ',
+      'മൺ',
+      'ക്ക',
+      'ന്ത',
+      'സ്ത്ര',
+      'ഗ്ദ്ധ',
+      'ന്ത്യ',
+      `കൽ${ZWNJ}പന`,
+      'കല്പന',
+      'അവൻ ഒരു software engineer ആണ്.',
+      '2024-ൽ 15 ശതമാനം വർധന.',
+      'COVID-19 മഹാമാരി ന്റെ കാലത്ത്.',
+      'കടൽ ശാന്തമായിരുന്നു.',
+      '',
+      '   ',
+    ];
+
+    for (const sample of samples) {
+      expect(foldWithOffsets(sample).text).toBe(normalizeForCompare(sample));
+      expect(foldWithOffsets(sample, { caseInsensitive: true }).text).toBe(
+        normalizeForCompare(sample, { caseInsensitive: true }),
+      );
+    }
+  });
+
+  it('maps every folded character back inside the source', () => {
+    const folded = foldWithOffsets(`${SEQUENCE_CHILLU_N} ${COMPOSED_OO}`);
+    for (let i = 0; i < folded.text.length; i += 1) {
+      expect(folded.sourceStart[i]).toBeLessThan(folded.sourceEnd[i]!);
+      expect(folded.sourceEnd[i]).toBeLessThanOrEqual(folded.source.length);
+    }
   });
 });
