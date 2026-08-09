@@ -201,6 +201,27 @@ export async function createDoc(db: EzhuthuDB, input: CreateDocInput = {}): Prom
   return doc;
 }
 
+/**
+ * The document, created if it is not there yet.
+ *
+ * Check-then-create outside a transaction is a race by construction — the same
+ * shape as reading max(seq) before appending, which ADR-0020 exists to
+ * prevent. Two callers both see nothing and both `add`, and the loser gets a
+ * ConstraintError. In this app the two callers are the effect that opens the
+ * document and whatever the user does first, so the window is exactly the
+ * first moments of a fresh install.
+ *
+ * The transaction's lock on `docs` serialises them, and the second caller
+ * finds the record the first one wrote.
+ */
+export async function openDoc(db: EzhuthuDB, input: CreateDocInput = {}): Promise<Doc> {
+  return db.transaction('rw', db.docs, async () => {
+    const id = input.docId;
+    const existing = id === undefined ? undefined : await db.docs.get(id);
+    return existing ?? (await createDoc(db, input));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Convenience wrappers. Every editing flow goes through these.
 // ---------------------------------------------------------------------------
