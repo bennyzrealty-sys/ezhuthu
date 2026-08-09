@@ -9,25 +9,50 @@ export const SMALL_DOC = [
 /**
  * Wipe IndexedDB before each test. Tests share an origin, so without this one
  * test's document leaks into the next.
+ *
+ * The delete runs from a same-origin page that does NOT boot the app.
+ *
+ * Doing it from the app — which is what this used to do — deletes a database
+ * the page itself has open, so the request fires `blocked` instead of
+ * `success` and completes only once that connection closes. Treating `blocked`
+ * as done then reloads into a race: sometimes the deferred delete lands after
+ * the fresh page has created its document, and the test that follows opens an
+ * empty app and times out waiting for a block that was wiped underneath it.
+ * That is the "element(s) not found: .block-row" flake, and it fails whichever
+ * test happened to draw the short straw.
+ *
+ * An icon is a convenient host: same origin, no script, no database.
  */
 export async function resetDatabase(page: Page): Promise<void> {
-  await page.goto('/');
+  await page.goto('/icons/icon.svg');
   await page.evaluate(async () => {
     const databases = (await indexedDB.databases?.()) ?? [{ name: 'ezhuthu' }];
     await Promise.all(
       databases.map(
         (d) =>
-          new Promise<void>((resolve) => {
+          new Promise<void>((resolve, reject) => {
             if (d.name === undefined) return resolve();
             const request = indexedDB.deleteDatabase(d.name);
             request.onsuccess = () => resolve();
-            request.onerror = () => resolve();
-            request.onblocked = () => resolve();
+            request.onerror = () => reject(new Error(`delete failed: ${d.name}`));
+
+            /*
+             * `blocked` is deliberately NOT resolved. It means a connection is
+             * still open — normally the app page we just navigated away from,
+             * whose connection closes a moment later — and `success` follows
+             * once it does. Resolving here is what made this racy: it reports
+             * "deleted" while the deletion is still pending, and the delete
+             * then lands on the next page's freshly created document.
+             *
+             * The timeout keeps a genuinely stuck delete from hanging the test
+             * with no explanation.
+             */
+            setTimeout(() => reject(new Error(`delete never completed: ${d.name}`)), 10_000);
           }),
       ),
     );
   });
-  await page.reload();
+  await page.goto('/');
 }
 
 /**

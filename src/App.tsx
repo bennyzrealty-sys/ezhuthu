@@ -1,17 +1,18 @@
 /**
- * Phase 2 shell: the document, plus the Phase 1 status panel behind a toggle.
+ * Phase 3 shell: the document, search, and the Phase 1 status panel behind a
+ * toggle.
  *
- * Deliberately thin. Resume, visibility, minimap, search and time-lapse are
- * Phases 5-7 and are not stubbed here — an empty button is worse than an
- * absent one.
+ * Deliberately thin. Resume, visibility, minimap and time-lapse are Phases 4-7
+ * and are not stubbed here — an empty button is worse than an absent one.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { db } from './db/schema';
-import { createDoc } from './core/events';
+import { openDoc } from './core/events';
 import { checkProjection, logHeadSeq, repairProjection } from './core/replay';
 import { importText } from './features/io/import';
-import { DocumentView } from './render/DocumentView';
+import { DocumentView, type DocumentViewHandle } from './render/DocumentView';
+import { SearchPanel } from './features/search/SearchPanel';
 import {
   estimateStorage,
   getBackupStatus,
@@ -32,9 +33,22 @@ interface Status {
   usageMb: number | null;
 }
 
+/**
+ * The document record, created on first run.
+ *
+ * Everything that writes has to go through this first. `loadStatus` runs in an
+ * effect, so on a genuinely empty database an Import fired before that effect
+ * settles reaches `importBlocks` with no `docs` row and throws
+ * "import: unknown document primary" — the toolbar shows the error, the app
+ * shows an empty document, and nothing says to try again. Rare in ordinary use
+ * and reliably reproducible with a fast enough first tap.
+ */
+async function ensureDoc(): Promise<Doc> {
+  return openDoc(db, { docId: DOC_ID, title: 'എഴുത്ത്' });
+}
+
 async function loadStatus(): Promise<Status> {
-  let doc = await db.docs.get(DOC_ID);
-  if (doc === undefined) doc = await createDoc(db, { docId: DOC_ID, title: 'എഴുത്ത്' });
+  await ensureDoc();
 
   // If a crash landed between the event append and the block write, the
   // projection is behind the log. Repair before showing anything (ADR-0008).
@@ -64,7 +78,9 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [searching, setSearching] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const view = useRef<DocumentViewHandle | null>(null);
 
   const refresh = useCallback(() => {
     loadStatus()
@@ -81,6 +97,9 @@ export default function App() {
       setBusy('Importing…');
       try {
         const text = await file.text();
+        // Not just belt and braces: on first run this can be reached before
+        // the effect that creates the document has finished.
+        await ensureDoc();
         const result = await importText(db, DOC_ID, text);
         setMessage(
           `Imported ${result.blocksAdded.toLocaleString()} blocks · ${result.wordsAdded.toLocaleString()} words.`,
@@ -95,6 +114,17 @@ export default function App() {
     },
     [refresh],
   );
+
+  /*
+   * One close path, used by the toolbar toggle, the panel's own button and
+   * Escape. Leaving the toggle to flip `searching` on its own was a real bug:
+   * the panel closed and the mark stayed behind on the paragraph, pointing at
+   * a search the reader had dismissed.
+   */
+  const closeSearch = useCallback(() => {
+    setSearching(false);
+    view.current?.clearHighlight();
+  }, []);
 
   const onBackup = useCallback(() => {
     setBusy('Backing up…');
@@ -129,6 +159,13 @@ export default function App() {
             backup {status.backup.urgency}
           </span>
         )}
+        <button
+          onClick={() => (searching ? closeSearch() : setSearching(true))}
+          aria-expanded={searching}
+          data-testid="search-toggle"
+        >
+          {searching ? 'Close search' : 'Search'}
+        </button>
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
         </button>
@@ -193,7 +230,22 @@ export default function App() {
         </div>
       )}
 
-      <DocumentView key={reloadKey} db={db} docId={DOC_ID} onChange={refresh} />
+      {searching && (
+        <SearchPanel
+          db={db}
+          docId={DOC_ID}
+          onReveal={(hit, matchIndex) =>
+            view.current?.reveal({
+              blockId: hit.blockId,
+              position: hit.position,
+              match: hit.matches[matchIndex],
+            })
+          }
+          onClose={closeSearch}
+        />
+      )}
+
+      <DocumentView ref={view} key={reloadKey} db={db} docId={DOC_ID} onChange={refresh} />
     </div>
   );
 }

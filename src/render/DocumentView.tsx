@@ -13,7 +13,15 @@
  * needs it and evicted behind.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { EzhuthuDB } from '../db/schema';
 import type { BlockIndexEntry, DocId } from '../db/types';
@@ -28,10 +36,31 @@ const OVERSCAN = 6;
 /** Text is fetched for the visible range plus this margin. */
 const TEXT_MARGIN = 24;
 
+/** Where a search result lives, and which characters of it to mark. */
+export interface RevealTarget {
+  blockId: string;
+  /** Position among live blocks, from the search cursor. A hint, not the truth. */
+  position: number;
+  match?: { start: number; end: number };
+}
+
+export interface DocumentViewHandle {
+  /**
+   * Scroll a block into view and mark the match inside it.
+   *
+   * Imperative because it is a one-off command, not state: expressing "go
+   * here" as a prop means every re-render has an opinion about where the
+   * document is scrolled, and the reader scrolling away afterwards fights it.
+   */
+  reveal: (target: RevealTarget) => void;
+  clearHighlight: () => void;
+}
+
 export interface DocumentViewProps {
   db: EzhuthuDB;
   docId: DocId;
   onChange?: () => void;
+  ref?: RefObject<DocumentViewHandle | null>;
 }
 
 interface FocusTarget {
@@ -39,11 +68,12 @@ interface FocusTarget {
   caret: number;
 }
 
-export function DocumentView({ db, docId, onChange }: DocumentViewProps) {
+export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
   const [texts, setTexts] = useState<Map<string, string>>(new Map());
   const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [loading, setLoading] = useState(true);
+  const [highlight, setHighlight] = useState<RevealTarget | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const heights = useRef(new HeightCache());
@@ -169,6 +199,70 @@ export function DocumentView({ db, docId, onChange }: DocumentViewProps) {
   }, [virtualizer]);
 
   // -------------------------------------------------------------------------
+  // Jumping to a search result
+  // -------------------------------------------------------------------------
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      reveal(target) {
+        /*
+         * The search cursor and this index are both "live blocks in order", so
+         * `position` is normally right. It can still be stale — a block
+         * deleted between the search and the tap shifts everything after it —
+         * so the id is what we trust and the position is only a starting
+         * guess. Getting this backwards sends the reader to a paragraph near
+         * the one they asked for, which is worse than a visible miss.
+         */
+        const at =
+          index[target.position]?.blockId === target.blockId
+            ? target.position
+            : index.findIndex((e) => e.blockId === target.blockId);
+        if (at === -1) return;
+
+        setHighlight(target);
+        // `center` rather than `start`: a result pinned under the toolbar
+        // gives no context above it, and context is what tells the reader
+        // whether this is the paragraph they meant.
+        virtualizer.scrollToIndex(at, { align: 'center' });
+      },
+      clearHighlight() {
+        setHighlight(null);
+      },
+    }),
+    [index, virtualizer],
+  );
+
+  // -------------------------------------------------------------------------
+  // Font loading
+  // -------------------------------------------------------------------------
+
+  /*
+   * Safety net for the case `font-display: block` is meant to make impossible.
+   * If Manjari has not arrived within the block period the browser paints the
+   * fallback face, and every height measured against it is wrong — at 1,563
+   * blocks that is a scrollbar lying by whole screens. Clearing the cache when
+   * fonts settle costs one re-measure of the ~12 rendered rows.
+   *
+   * On the normal path the font is already loaded here and this fires once
+   * with nothing cached, which is free.
+   */
+  useEffect(() => {
+    if (typeof document === 'undefined' || document.fonts === undefined) return;
+
+    let cancelled = false;
+    void document.fonts.ready.then(() => {
+      if (cancelled) return;
+      heights.current.clear();
+      virtualizer.measure();
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [virtualizer]);
+
+  // -------------------------------------------------------------------------
   // Editing
   // -------------------------------------------------------------------------
 
@@ -191,6 +285,10 @@ export function DocumentView({ db, docId, onChange }: DocumentViewProps) {
           ? text.length
           : caretOffsetFromPoint(element, clientX, clientY, text);
       setFocus({ blockId, caret });
+      // The mark's offsets are into the text as it was when the search ran.
+      // Once the reader is editing, they are a claim about text that is about
+      // to change, so drop it rather than let it drift.
+      setHighlight(null);
     },
     [texts],
   );
@@ -337,6 +435,9 @@ export function DocumentView({ db, docId, onChange }: DocumentViewProps) {
                   blockId={entry.blockId}
                   text={text ?? ''}
                   onActivate={activate}
+                  highlight={
+                    highlight?.blockId === entry.blockId ? highlight.match : undefined
+                  }
                 />
               )}
             </div>

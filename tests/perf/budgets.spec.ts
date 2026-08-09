@@ -24,7 +24,14 @@ const BUDGET = {
   keystrokeMs: 16,
   memoryMb: 150,
   frameMs: 16.7,
+  // Not a frame budget: search runs on a deliberate action, not during typing
+  // or scrolling. This is the threshold at which ADR-0015's decision to skip a
+  // full-text index stops being defensible and the scan belongs in a Worker.
+  searchMs: 250,
 };
+
+/** Must match DEBOUNCE_MS in features/search/SearchPanel.tsx. */
+const DEBOUNCE_MS = 180;
 
 test.beforeAll(() => {
   if (!existsSync(CORPUS)) {
@@ -215,4 +222,86 @@ test('memory stays within budget after a full scroll pass', async ({ page }) => 
   const mb = bytes / (1024 * 1024);
   console.log(`memory: ${mb.toFixed(1)} MB`);
   expect(mb).toBeLessThan(BUDGET.memoryMb);
+});
+
+test('search scans the whole document within budget', async ({ page }) => {
+  await seed(page);
+  await page.getByTestId('search-toggle').click();
+
+  /*
+   * ADR-0015 accepted a linear scan over the store on the grounds that at this
+   * size it is "a few milliseconds", and deferred a full-text index until
+   * measurement said otherwise. This is that measurement — without it, the
+   * decision not to build an index rests on an estimate.
+   *
+   * Measured through the real panel rather than a test-only handle on
+   * searchDocument, for the same reason the e2e helpers import through the
+   * file input: a seam measures a path no user takes. The cost of that is that
+   * the number includes the 180 ms debounce and the result render, so it is
+   * "keystroke to results", not scan time. Scan time is the reported figure
+   * minus the debounce, and the budget below allows for both.
+   */
+  const measure = (needle: string) =>
+    page.evaluate(async (text) => {
+      const input = document.querySelector<HTMLInputElement>('[data-testid="search-input"]');
+      const summary = document.querySelector('[data-testid="search-summary"]');
+      if (input === null || summary === null) return null;
+
+      const settled = new Promise<number>((resolve) => {
+        const observer = new MutationObserver(() => {
+          const shown = summary.textContent ?? '';
+          // The in-progress state ends with an ellipsis; anything else is a
+          // finished scan reporting its count.
+          if (shown !== '' && !shown.endsWith('…')) {
+            observer.disconnect();
+            resolve(performance.now());
+          }
+        });
+        observer.observe(summary, { childList: true, subtree: true, characterData: true });
+      });
+
+      // React owns the input's value, so set it through the prototype and
+      // dispatch the event React is listening for.
+      const started = performance.now();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      const finished = await settled;
+      return { ms: finished - started, summary: summary.textContent ?? '' };
+    }, needle);
+
+  // Warm the store's page cache first; the interesting number is the second
+  // query, not the one that paid for the first read of the object store.
+  await measure('കടൽ');
+
+  // Three shapes: a miss (scans every block, so it is the honest worst case
+  // for scan cost), a very common word, and one that only matches in full
+  // through the chillu fold.
+  const cases: Array<[name: string, needle: string]> = [
+    ['miss', 'ഇങ്ങനെയൊരു വാക്ക് ഇവിടെ ഇല്ല'],
+    ['common', 'മരം'],
+    ['chillu', 'അവൻ'],
+  ];
+
+  const summaries: Record<string, string> = {};
+
+  for (const [name, needle] of cases) {
+    const result = await measure(needle);
+    expect(result).not.toBeNull();
+    summaries[name] = result!.summary;
+    console.log(
+      `search (${name}): ${result!.ms.toFixed(0)}ms keystroke-to-results ` +
+        `(~${Math.max(0, result!.ms - DEBOUNCE_MS).toFixed(0)}ms scan) · ${result!.summary}`,
+    );
+    expect(result!.ms).toBeLessThan(DEBOUNCE_MS + BUDGET.searchMs);
+  }
+
+  /*
+   * Not a timing assertion, but the corpus is the only place we can make it:
+   * scripts/generate-corpus.ts writes അവൻ 754 times atomically and 819 times
+   * as the ZWJ sequence. A search on raw bytes finds 754 of them. The fold is
+   * what turns that into 1,573 — over eight hundred paragraphs of a manuscript
+   * that would otherwise be invisible to search.
+   */
+  expect(summaries.chillu).toContain('1,573');
 });

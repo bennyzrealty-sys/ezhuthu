@@ -144,17 +144,39 @@ citations. Never assume one script per block.
 - `lang="ml"` on the document root, with the font stack covering both ranges.
 - Do not detect "the script of a block" and switch behaviour on it. There is no such thing.
 
-## Rule 7 — Fonts must keep their layout tables
+## Rule 7 — Fonts must keep their layout tables *and* the glyphs behind them
 
-Conjunct formation lives in the font's GSUB/GPOS tables. A subsetter run with default settings
-strips layout features and breaks every conjunct in the document.
+Conjunct formation needs two things from the font: the GSUB features that trigger substitution
+(`akhn` `half` `pref` `blwf` `pstf` `pres` `blws` `psts` `haln`) and the several hundred conjunct
+glyphs those features substitute in. A subset missing either renders every conjunct as separate
+consonants with a visible virama — technically legible, obviously wrong to a reader.
+
+Two invocations do it. Neither is a default; an earlier version of this rule said the defaults were
+the danger and that was wrong (ADR-0024). Measured on Manjari-Regular, 912 glyphs:
+
+| Invocation | Glyphs | GSUB features | Conjuncts |
+|---|---|---|---|
+| pyftsubset defaults | 811 | all nine | form correctly |
+| `--layout-features='*'` | 828 | all nine, plus discretionary | form correctly |
+| `--layout-features=''` | 323 | none | **broken** |
+| `--no-layout-closure` | 323 | four | **broken** |
+
+`--no-layout-closure` is the one to watch: it leaves the feature list looking healthy and removes
+the glyphs, so anything that checks only feature tags passes.
 
 `scripts/subset-fonts.sh` uses `--layout-features='*'` and keeps the full Malayalam block plus
 ZWJ/ZWNJ. ADR-0019 covers why we ship Manjari only by default.
 
-**The bug this prevents.** Every conjunct renders as separate consonants with visible viramas —
-the text becomes wrong-looking to a reader, though technically legible. A rendering test asserts a
-known conjunct string produces the expected shaped width.
+**How it is caught.** Three places, because the failure is invisible in a passing build:
+
+- `scripts/verify-font.py` fails the subsetting run on a missing feature, a missing GPOS/GDEF, a
+  missing joiner, or a glyph count under 600.
+- `tests/unit/fonts.test.ts` asserts the same against the committed `.woff2`, on every push. It has
+  a deliberately-stripped fixture beside a good one so it can be seen to fail.
+- `tests/e2e/fonts.spec.ts` is the real check: it measures `ക്ക` against `ക്‌ക` — the same
+  consonants with ZWNJ suppressing the conjunct — in a real shaper. If layout is intact the widths
+  differ (39.5 px vs 59.25 px at 32 px); if it is stripped, both render as the suppressed form and
+  the widths are identical.
 
 ---
 

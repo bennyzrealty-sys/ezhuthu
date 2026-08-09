@@ -30,3 +30,7 @@ tests/fixtures/generated/
 
 # Vercel
 .vercel
+
+# Font sources fetched by scripts/subset-fonts.sh — only the subset output
+# in public/fonts is committed.
+vendor/fonts/
