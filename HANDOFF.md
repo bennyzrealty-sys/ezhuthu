@@ -3,19 +3,20 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-09 · end of Phase 4
+**Last updated:** 2026-08-09 · end of Phase 5
 
 ---
 
 ## Where the project is
 
-**Phases 1, 2, 3 and 4 complete.** The event log and its durability layer work, there is a working
+**Phases 1 through 5 complete.** The event log and its durability layer work, there is a working
 editor on top of them, the document renders in a bundled Malayalam face that shapes correctly,
-search finds words the reader can see anywhere in a 1,563-block document, and the app now measures
-where attention actually was.
+search finds words the reader can see anywhere in a 1,563-block document, the app measures where
+attention actually was — and, as of Phase 5, it uses that to answer requirement 1: on open, offer
+the writer his way back to where he was working.
 
-**Phases 1-3 are merged to `main`** (PRs #1 and #2). Phase 4 is on
-`claude/ezhuthu-phase4-signals-ivf2aj`. Start Phase 5 from a fresh branch off whatever has landed
+**Phases 1-4 are merged to `main`** (PRs #1, #2 and #3). Phase 5 is on
+`claude/ezhuthu-phase5-resume`. Start Phase 6 from a fresh branch off whatever has landed
 on `main`:
 
 ```bash
@@ -59,9 +60,23 @@ virtualiser to a result and marks it.
 - Every tunable is a named constant in `constants.ts`, which is the module ADR-0017 says to come
   back to.
 
-**Nothing in the UI consumes signals yet.** That is Phase 5. The store fills; no button appeared.
+**Resume (Phase 5).** The four-destination strip of ADR-0023, in `src/features/resume/`:
 
-**Tests: 231 unit + 29 e2e + 6 perf, all passing.**
+- **`destinations.ts`** — the four queries. Last edited is the most recently updated block with
+  `revisionCount > 0` (the filter is what stops a fresh import from offering the importer's last
+  paragraph as "where you were"); most rewritten is the highest revision count inside a seven-day
+  window; last read and longest dwelled come from the previous session's gated dwell.
+- **`preference.ts`** — pick counts in `settings`, a five-pick floor before anything is
+  emphasised, ties broken by the fixed order.
+- **`ResumeStrip.tsx`** — four slots in fixed order, absent ones rendered and disabled so the
+  positions never move. The learned favourite is the *default*: emphasised, and what Enter or a
+  tap on the strip itself activates. Shown once per launch; gone once used or dismissed.
+- **ADR-0026** — "last read" is the deepest paragraph *dwelled on* last session, not a stored
+  scroll offset.
+
+**`scrollback` is still the one signal nothing reads.** Phase 6's auto-bookmarks are its consumer.
+
+**Tests: 248 unit + 36 e2e + 6 perf, all passing.**
 
 ## Measured performance
 
@@ -85,10 +100,13 @@ a subtraction; everything else is on a 1 s timer or a 2 s flush.
 
 ## What does not work yet
 
-- **No resume strip, margin bar, minimap, ghost markers, time-lapse or corpus export.** Phases
-  5-7. Nothing is stubbed — an empty button is worse than an absent one.
-- **Nothing reads the signals.** `queries.ts` has the aggregations Phase 5 needs and no caller.
-  The `scrollback` signal has no consumer at all until Phase 6's auto-bookmarks.
+- **No margin bar, minimap, ghost markers, time-lapse or corpus export.** Phases 6-7. Nothing is
+  stubbed — an empty button is worse than an absent one.
+- **The `scrollback` signal has no consumer.** It is recorded and pruned and read by nobody until
+  Phase 6's auto-bookmarks.
+- **Resume does not restore a scroll position, and deliberately does not** (ADR-0026). It offers
+  four blocks. A writer who revises backwards through a manuscript gets "deepest" where he means
+  "where I stopped"; the ADR names the switch and the data for it is already stored.
 - **The ADR-0017 constants have never been revisited against real use.** 60 s, 1 s, the 2 s
   scroll-back dwell and the 2 s hesitation floor are all guesses. They are in one module for
   exactly this reason.
@@ -110,17 +128,19 @@ a subtraction; everything else is on a 1 s timer or a 2 s flush.
 
 ## The next three tasks
 
-1. **Resume** (Phase 5). The four-destination strip, fixed order, preference learned as the
-   pre-selected default with a five-pick floor (ADR-0023). Three of the four destinations are
-   queries that already exist: last edited from the log, longest dwelled and last read from
-   `signals/queries.ts`, most rewritten from `Block.revisionCount`.
+1. **Visibility** (Phase 6). Margin bar with time decay (ADR-0005, ADR-0006), the bucketed
+   minimap (ADR-0021), ghost markers for deletions (ADR-0018), haptics where they exist
+   (ADR-0022), and the scroll-back auto-bookmarks Phase 4 has been recording since it landed.
+   Everything it needs is in `updatedAt`, `revisionCount` and the `scrollback` signal.
 
-2. **Visibility** (Phase 6). Margin bar, time decay, the bucketed minimap (ADR-0021), ghost
-   markers (ADR-0018), and the scroll-back auto-bookmarks that Phase 4 is already recording.
-
-3. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
+2. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
    mitigation is still outstanding. Whole-block granularity by tap and extend; copy block, copy
    range, copy document.
+
+3. **Revisit the guessed constants** — the four in `signals/constants.ts` (ADR-0017) and
+   `REWRITE_WINDOW_DAYS` in `features/resume/destinations.ts`. This one needs a person writing in
+   the app for a few sessions; no automated run can substitute for it. A resume suggestion that
+   feels wrong is the symptom to watch for.
 
 ## Traps a fresh session will fall into
 
@@ -235,7 +255,7 @@ through `setImmediate`. Fake `setTimeout`/`clearTimeout` only.
 
 ## Decisions already made — do not relitigate
 
-All 25 are in `DECISIONS.md`. The fourteen that departed from the original brief:
+All 26 are in `DECISIONS.md`. The fifteen that departed from the original brief:
 
 | ADR | Departure |
 |---|---|
@@ -254,6 +274,7 @@ All 25 are in `DECISIONS.md`. The fourteen that departed from the original brief
 | 0023 | Resume strip order fixed; preference learned as default, not layout |
 | 0024 | The subsetter's defaults were never the danger; the guarantee moves to the output |
 | 0025 | Dwell is sampled on a timer; no `IntersectionObserver` |
+| 0026 | "Last read" is the deepest paragraph dwelled on, not a scroll offset |
 
 ## Corrections made so far
 

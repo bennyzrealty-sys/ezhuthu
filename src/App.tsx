@@ -13,6 +13,7 @@ import { checkProjection, logHeadSeq, repairProjection } from './core/replay';
 import { importText } from './features/io/import';
 import { DocumentView, type DocumentViewHandle } from './render/DocumentView';
 import { SearchPanel } from './features/search/SearchPanel';
+import { ResumeStrip } from './features/resume/ResumeStrip';
 import {
   estimateStorage,
   getBackupStatus,
@@ -80,6 +81,14 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [searching, setSearching] = useState(false);
+  /*
+   * The strip is an opening offer, not a panel. It is shown once per launch —
+   * requirement 1 is "on open, return the writer to where he was working" — and
+   * once he has gone somewhere, or said no, it is gone until the next launch.
+   * It renders nothing at all until a destination resolves, so a fresh install
+   * never sees it.
+   */
+  const [resuming, setResuming] = useState(true);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const view = useRef<DocumentViewHandle | null>(null);
 
@@ -263,6 +272,21 @@ export default function App() {
             )}
           </section>
         </div>
+      )}
+
+      {resuming && (
+        <ResumeStrip
+          db={db}
+          docId={DOC_ID}
+          onGo={(destination) => {
+            setResuming(false);
+            // `position` is a hint the view corrects by id when it is wrong,
+            // and here it is always wrong — the destinations are resolved from
+            // the store, which has no opinion about the rendered index.
+            view.current?.reveal({ blockId: destination.blockId, position: -1 });
+          }}
+          onDismiss={() => setResuming(false)}
+        />
       )}
 
       {searching && (

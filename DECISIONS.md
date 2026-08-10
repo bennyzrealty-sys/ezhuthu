@@ -1008,3 +1008,50 @@ exactly the settled part of the interval.
   milliseconds instead of waiting out a 60-second idle cutoff in real time.
 - `docs/SIGNALS.md` is corrected to match. The four gates of ADR-0017 are untouched — this is how
   the model is fed, not what it decides.
+
+---
+
+## ADR-0026 — "Last read" is the deepest paragraph dwelled on, not the furthest scroll position
+
+**Status:** accepted · refines destination 2 of ADR-0023; the strip's shape is unchanged
+
+**Context.** `docs/SIGNALS.md` defined resume destination 2 as *"furthest scroll position from
+last session"*. Building it in Phase 5 made two problems visible.
+
+- **A scroll offset is not a place in the document.** It is a pixel measurement against a layout
+  that depends on viewport width, the font that was loaded, and the height cache. Restore it after
+  a rotation, a split-screen resize, or a fallback-font first paint and it lands somewhere else —
+  not near where the reader was, but at whatever text now occupies that many pixels. Everything
+  else in this app addresses blocks (ADR-0003) precisely because blocks survive relayout.
+- **Scrolling to the end is not reading to the end.** A fling that comes to rest at the bottom
+  sets "furthest scroll" to the last paragraph. That is ADR-0017's error in a less obvious
+  disguise: a measure of pixels offered to the writer as a measure of attention, confidently
+  wrong, and followed.
+
+**Decision.** Destination 2 is the block with the greatest `Block.order` among the blocks that
+accrued **gated** dwell in the last session. It reuses the attention model rather than standing a
+second, weaker measure of the same thing beside it, and it needs nothing stored: the signals are
+already there.
+
+Comparison is lexicographic on `order`, like every other comparison of that field (ADR-0007).
+
+**Alternatives considered.**
+
+- *Store a scroll offset per session.* The specified design. New state, layout-dependent, and it
+  rewards flinging.
+- *Store the deepest block that was rendered.* Better than pixels — it is a block — but it still
+  counts a paragraph that crossed the viewport during a fling, which is the case ADR-0017's settle
+  gate exists to exclude.
+- *Drop destination 2 and offer three.* "Last read" is the only destination that answers *I was
+  reading, not editing*, which for a 100,000-word manuscript is most of what a session is.
+
+**Consequences.**
+
+- A session spent only flinging produces no "last read" at all. That is correct — nothing was
+  read — and the slot renders disabled rather than guessing.
+- The destination is empty on the first relaunch after an import, because no earlier session
+  exists to have dwelled in one.
+- A writer who revises *backwards* through a manuscript, from the end towards the beginning, gets
+  "deepest" when he means "where I stopped". Noted as a revisit trigger: the alternative is the
+  **latest** dwelled block by timestamp rather than the deepest by order, and the data to switch
+  is already in the store.
