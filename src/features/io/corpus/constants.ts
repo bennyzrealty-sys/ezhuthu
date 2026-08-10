@@ -29,13 +29,19 @@ export const COALESCE_WINDOW_MS = 5 * 60 * 1000;
 export const TRIVIAL_MAX_CLUSTERS = 1;
 
 /**
- * Below this fraction of the paragraph changed — *and* with the words left
- * standing where they were — the pair is a correction rather than a rewrite.
+ * Below this fraction of the paragraph changed — *and* with no word added or
+ * removed — the pair is a correction rather than a rewrite.
  *
- * Both halves are needed. The fraction alone would drop a single word swapped
- * in a long paragraph, which is exactly the kind of choice the corpus exists to
- * record; the word-boundary test alone would keep every accent fix in a short
- * one.
+ * Both halves are needed. The fraction alone would drop a paragraph rewritten
+ * one clause at a time; the word-boundary test alone would keep every accent
+ * fix, since correcting a vowel sign adds and removes no words at all.
+ *
+ * Note what this measures is proportional, so the same edit is judged
+ * differently in a sentence than in a page: one word swapped in a short
+ * paragraph survives and the same swap inside a very long one does not. That is
+ * deliberate — a corpus of sentence-level revision is what ADR-0016 is after —
+ * but it is the threshold here with the least evidence behind it, and it has
+ * never been run against a real manuscript.
  */
 export const TRIVIAL_MAX_RATIO = 0.05;
 
