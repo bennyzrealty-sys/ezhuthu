@@ -24,6 +24,9 @@ import {
   type PersistenceState,
 } from './db/persistence';
 import { pruneSignals } from './signals/queries';
+import { SnapshotScheduler } from './features/timelapse/snapshotting';
+import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
+import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
 import {
   DEFAULT_FEEDBACK,
   hapticsSupported,
@@ -89,6 +92,7 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [searching, setSearching] = useState(false);
+  const [timelapsing, setTimelapsing] = useState(false);
   const [bookmarking, setBookmarking] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
   /*
@@ -125,6 +129,31 @@ export default function App() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  /*
+   * Anchors for the time-lapse scrub (ADR-0009). Asked for after every
+   * committed change and written from idle, at most one at a time; the
+   * scheduler decides that nothing is due, which is the answer on all but every
+   * five-hundredth commit.
+   *
+   * Not in the append transaction, deliberately. A snapshot is disposable —
+   * losing one costs a slower scrub and never data — so it must not be able to
+   * fail or slow a write of real work.
+   */
+  const snapshots = useRef<SnapshotScheduler | null>(null);
+  useEffect(() => {
+    const scheduler = new SnapshotScheduler(db, DOC_ID);
+    snapshots.current = scheduler;
+    return () => {
+      scheduler.stop();
+      snapshots.current = null;
+    };
+  }, []);
+
+  const onDocumentChange = useCallback(() => {
+    refresh();
+    snapshots.current?.request();
+  }, [refresh]);
 
   /*
    * Signals older than the retention window have no reader — the queries ask
@@ -196,6 +225,39 @@ export default function App() {
     view.current?.clearHighlight();
   }, []);
 
+  /*
+   * The corpus (ADR-0016). A batch walk of the whole log, so it is put behind a
+   * busy state and its result is reported in numbers the writer can check
+   * against their own memory of the work — "412 revisions, 180 exported" says
+   * something; "exported" does not.
+   *
+   * Never automatic and never uploaded. This writes a file to the device and
+   * does nothing else.
+   */
+  const onExportCorpus = useCallback(() => {
+    setBusy('Building the corpus…');
+    const now = Date.now();
+    exportCorpus(db, DOC_ID)
+      .then(({ jsonl, stats }) => {
+        if (stats.emitted === 0) {
+          setMessage(
+            stats.revisions === 0
+              ? 'No revisions yet — the corpus is built from paragraphs you come back to.'
+              : `${stats.revisions.toLocaleString()} revisions, all of them corrections. Nothing to export yet.`,
+          );
+          return;
+        }
+        const title = status?.doc.title ?? '';
+        downloadCorpus(corpusFilename(title, now), jsonl);
+        setMessage(
+          `Exported ${stats.emitted.toLocaleString()} of ${stats.pairs.toLocaleString()} revisions ` +
+            `across ${stats.blocks.toLocaleString()} paragraphs.`,
+        );
+      })
+      .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(null));
+  }, [status?.doc.title]);
+
   const onBackup = useCallback(() => {
     setBusy('Backing up…');
     runBackup(db)
@@ -251,8 +313,18 @@ export default function App() {
         >
           {bookmarking ? 'Close bookmarks' : 'Bookmarks'}
         </button>
+        <button
+          onClick={() => setTimelapsing(true)}
+          disabled={busy !== null}
+          data-testid="timelapse-toggle"
+        >
+          Time-lapse
+        </button>
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
+        </button>
+        <button onClick={onExportCorpus} disabled={busy !== null} data-testid="corpus-export">
+          Export corpus
         </button>
         <button onClick={onBackup} disabled={busy !== null}>
           Back up
@@ -274,8 +346,16 @@ export default function App() {
         />
       </div>
 
-      {busy !== null && <p className="note" style={{ padding: '0 1rem' }}>{busy}</p>}
-      {message !== null && <p className="note" style={{ padding: '0 1rem' }}>{message}</p>}
+      {busy !== null && (
+        <p className="note" style={{ padding: '0 1rem' }} data-testid="busy">
+          {busy}
+        </p>
+      )}
+      {message !== null && (
+        <p className="note" style={{ padding: '0 1rem' }} data-testid="message" aria-live="polite">
+          {message}
+        </p>
+      )}
 
       {showStatus && status !== null && (
         <div style={{ padding: '0 1rem' }}>
@@ -387,14 +467,26 @@ export default function App() {
         />
       )}
 
+      {/*
+        * `onDocumentChange` rather than `refresh`: Phase 7 also asks for a
+        * snapshot after every commit, which is what gives the scrub its anchors
+        * (ADR-0009).
+        */}
       <DocumentView
         ref={view}
         key={reloadKey}
         db={db}
         docId={DOC_ID}
-        onChange={refresh}
+        onChange={onDocumentChange}
         feedback={feedback}
       />
+
+      {/*
+        * Mounted only while open, so the Worker exists only while it is being
+        * used and the document behind it is untouched — the panel is a reader
+        * of history, not a mode the editor enters.
+        */}
+      {timelapsing && <TimelapsePanel docId={DOC_ID} onClose={() => setTimelapsing(false)} />}
     </div>
   );
 }

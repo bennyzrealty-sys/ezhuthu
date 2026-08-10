@@ -106,13 +106,24 @@ describe('backup contents', () => {
     );
   });
 
-  it('builds a filename that survives Malayalam titles', () => {
-    const name = backupFilename([{ title: 'എന്റെ നോവൽ' } as never], T0);
-    expect(name).toMatch(/^ezhuthu-.+\.json$/);
-    expect(name).not.toContain(' ');
-    expect(name).not.toContain(':');
-    // Malayalam is \p{L} — the title should not be stripped to nothing.
-    expect(name).toMatch(/[ഀ-ൿ]/);
+  it('names a backup after the moment when the title cannot survive', () => {
+    /*
+     * Chromium discards a `download` attribute containing any non-ASCII
+     * character and saves the file as `download` — no extension, and colliding
+     * with every other download it has ever named that. For the one file
+     * standing between the writer and an eviction (ADR-0013) that is worse than
+     * losing the title from the name, so the title is included only where it
+     * survives and the stamp identifies the file either way.
+     */
+    expect(backupFilename([{ title: 'എന്റെ നോവൽ' } as never], T0)).toBe(
+      'ezhuthu-2023-11-14T22-13-20.json',
+    );
+    expect(backupFilename([{ title: 'My Novel' } as never], T0)).toBe(
+      'ezhuthu-My-Novel-2023-11-14T22-13-20.json',
+    );
+    expect(backupFilename([{ title: '' } as never, { title: '' } as never], T0)).toBe(
+      'ezhuthu-all-documents-2023-11-14T22-13-20.json',
+    );
   });
 });
 

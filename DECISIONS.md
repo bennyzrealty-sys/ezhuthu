@@ -1148,3 +1148,222 @@ text is genuinely gone from the document and the seam is how it is found again.
   random sequence generator never sets `mergedInto` and both fold paths set the same meta when it is.
 - A deliberate-delete affordance now exists, which the editor lacked; it is the entry point every
   ghost in the document comes from.
+
+---
+
+## ADR-0029 — The scrub owns its state in the Worker and receives windows
+
+**Status:** accepted · builds on ADR-0009
+
+**Context.** ADR-0009 put historical replay in a Web Worker so that scrubbing never competes with
+typing, and stopped there. Three questions were left open, and each has a wrong answer that looks
+obvious.
+
+*What comes back from a replay?* The materialised document is the natural answer. It is also
+600 KB of block text structured-cloned across a thread boundary, per scrub position, on a device
+whose memory budget exists because mid-range Android reclaims background tabs (`docs/PERFORMANCE.md`).
+The present is never all resident; there is no reason history should be.
+
+*What happens to the positions a drag passes through?* A drag emits positions far faster than a
+replay answers them. Sent as they arrive, a two-second drag queues sixty replays, the document
+lurches through sixty states nobody asked to see, and the one the thumb stopped on arrives last.
+
+*Where can the slider stop?* Not at every event. Events are distributed neither evenly in time nor
+evenly in interest: an import writes 1,563 of them at one instant, an afternoon writes a few
+hundred over four hours, and the months between two drafts write none.
+
+**Decision.**
+
+**The Worker keeps the materialised state; the main thread asks for windows of it.** A
+materialisation returns `{seq, blockCount, wordCount}`; text crosses only as a window of blocks.
+Every window reply carries the seq it was taken from, because the Worker holds exactly one state
+and a window that lands after the scrub has moved on would otherwise put the wrong paragraphs
+under the date on screen.
+
+**Materialisation is coalesced: one replay in flight, one waiting, and the waiting one is
+replaced by wherever the thumb has since moved.** A superseded request resolves to `null` rather
+than rejecting — during a drag, being overtaken is the normal case and not a failure. This is the
+same reasoning as dropping a frame.
+
+**The slider addresses instants, not events.** Events written in one transaction share a `ts` and
+are one stop, so an import is one position rather than sixteen hundred. Beyond a cap, stops are
+thinned evenly, preferring the end of a writing session over a stop a counter produced.
+
+**The reading position is fixed and time moves.** Scrubbing does not return to the top of the
+document. Watching one passage change is the question a writer actually has about their own
+history; a series of unrelated first paragraphs is not.
+
+**Alternatives considered.**
+
+- *Post the whole document per position.* Simplest, and it puts the largest allocation in the app
+  on the hottest interaction in the feature.
+- *Cancel the running replay.* There is no way to interrupt a fold mid-flight without checking a
+  flag inside it, which puts scrub concerns into `core/`. Coalescing the queue gets the same
+  result — at most one wasted replay — with nothing added to the fold.
+- *Debounce the slider instead of coalescing.* Equivalent while dragging and worse when stopped:
+  a debounce waits before starting the replay the reader is already waiting for.
+- *Let the panel restore a past state.* Out of scope, and not a small feature: the honest
+  implementation replays forward into new events, and the dishonest one is a whole-document write
+  (Rule 1). A viewer that also rewrites the document is two features.
+
+**Consequences.**
+
+- Opening the panel on the 80k-word corpus — Worker start, a cursor over every event, and a full
+  replay — measures 180–191 ms, and a scrub to the earliest stop 74–83 ms, against budgets of 2 s
+  and 400 ms.
+- Time-lapse holds a second copy of the document, in the Worker, for as long as the panel is
+  open. The Worker is created with the panel and terminated with it.
+- The main thread's memory profile is unchanged by history: it holds one window.
+- Mid-drag positions are never rendered, which is the intended behaviour and would look like
+  dropped updates to anyone reading the client without this note.
+
+---
+
+## ADR-0030 — A revision is a change to prose that already existed
+
+**Status:** accepted · refines ADR-0012 and ADR-0016
+
+**Context.** ADR-0016 exports (before, after) pairs and ADR-0012 says how they are derived and
+compacted. Neither says what counts as a revision, and the log contains several things that
+produce a well-formed pair and teach nothing:
+
+- a `delete`, which carries the full removed text (ADR-0012) and pairs to an empty `after`
+- the first write into a paragraph created empty, which pairs from an empty `before`
+- a `move`, which changes no text at all
+- a paragraph re-encoded rather than rewritten — `അവന്‍` to `അവൻ` — which a keyboard change does
+  to every chillu in a manuscript at once
+
+**Decision.** A pair is emitted only for a change to text that already existed and still exists.
+Concretely: `delete` ends a coalescing run and produces no pair; a pair with an effectively empty
+side is dropped; `move` is transparent and does not split a run; and both sides are folded
+(`text/normalize.ts`) before being compared, so re-encoding is not a revision.
+
+Everything here is an **export-time** rule over an intact log, as ADR-0012 requires. Deletions
+remain in the log with their text, and a future exporter that wants them can have them.
+
+**Alternatives considered.**
+
+- *Emit deletions as `(text, "")`.* They are real acts and the data is there. But the corpus
+  exists to record how this writer improves a Malayalam sentence, and "the sentence was removed"
+  answers a different question. Including them would also dominate the file for any writer who
+  cuts as much as they add, which is most of them.
+- *Emit composition as `("", text)`.* Same shape of mistake: writing is not revising, and the
+  document itself is a better record of what was written.
+- *Compare unfolded, so re-encoding shows up.* Then switching keyboards produces a revision for
+  every paragraph in the manuscript, each with a before and after that are identical on screen.
+  The corpus would be mostly that.
+- *Treat a `move` as ending a run.* Reordering a paragraph between two typing bursts would then
+  split one act of revision in two, for a change that touched no text.
+
+**Consequences.**
+
+- The corpus is smaller and every record in it is a rewrite.
+- A document that has only been imported exports nothing at all, which is correct and needs
+  saying in the UI — otherwise it reads as a broken button.
+- `revisionIndex` counts coalesced acts of revision before triviality filtering, so indices in an
+  exported file have gaps. That is information: index 7 means the seventh time this paragraph was
+  worked over, and the six that were filtered are part of what the record says.
+
+---
+
+## ADR-0031 — File names handed to the browser are ASCII
+
+**Status:** accepted
+
+**Context.** Two features write files: backups (ADR-0013) and the corpus (ADR-0016). Both named
+the file after the document, and the document is called `എഴുത്ത്`.
+
+Measured in the Chromium this project tests against: a `download` attribute containing any
+non-ASCII character is discarded whole, and the file is saved as `download` — no extension, and
+colliding with every other download the browser has ever named that. `നോവൽ` and `café` fail
+identically, so this is not a Malayalam problem and not a shaping problem; it is what the
+attribute carries.
+
+**Decision.** The title contributes to a file name only through an ASCII-safe stem, and is
+omitted when nothing survives. The timestamp identifies the file: `ezhuthu-2026-08-10T09-30-00.json`.
+
+This applies **only to file names handed to the browser.** It is not a rule about text anywhere
+else, and it is nearly the opposite of the rules that govern content: stored text keeps its
+original bytes (ADR-0014), comparison folds rather than strips (`docs/MALAYALAM.md` Rule 5),
+and the corpus and backup files are Malayalam throughout.
+
+**Alternatives considered.**
+
+- *Keep the Unicode name.* Correct on browsers that carry it, and on the ones that do not, a
+  backup called `download`, then `download(1)`. For the file ADR-0013 calls the only real
+  protection against eviction, an unnamed extensionless duplicate is the failure wearing the
+  appearance of success.
+- *Percent-encode the title.* Survives, and produces `ezhuthu-%E0%B4%8E%E0%B4%B4...json`, which is
+  worse to read than no title at all.
+- *Transliterate to Latin.* Inventing a romanisation of the user's title, badly, in a project
+  whose premise is that Malayalam deserves better than that.
+- *Feature-detect at runtime.* There is nothing to detect: the attribute is set and the file is
+  named by the browser afterwards, with no result the page can read.
+
+**Consequences.**
+
+- Every exported file has a name and an extension on every browser.
+- A Malayalam-titled document's backups are distinguished by timestamp alone. Acceptable while
+  there is one document; worth revisiting when there are several.
+- The rule lives in one function, `fileNameStem` in `src/ui/download.ts`, with the measurement in
+  its comment so the next reader does not widen the keep-set back.
+
+---
+
+## ADR-0032 — Judge a revision by the word that changed, not by the paragraph
+
+**Status:** accepted · corrects the threshold in ADR-0012, not its intent
+
+**Context.** ADR-0012 drops a pair when it "has a normalised edit distance below threshold with no
+word-boundary change". Implemented literally, that is: change ÷ paragraph length below 5%, and the
+same number of words on both sides.
+
+Phase 7 ran it against a real manuscript for the first time — 116 prose paragraphs of a
+4,400-word Malayalam narration script. It dropped **every word swap in the document, 27 of 27**,
+which is the single thing ADR-0016 exists to collect.
+
+The measurements say the rule could not have worked. A paragraph in that script averages 145
+grapheme clusters.
+
+| Change | Clusters | Of the paragraph | Words |
+|---|---|---|---|
+| `അയാൾ` → `അയാള` (typo) | 1 | 0.7% | unchanged |
+| `കപ്പൽ` → `നൗക` (word choice) | 3 | 2.1% | unchanged |
+
+No proportional cutoff separates 0.7% from 2.1%. What such a cutoff *does* separate is short
+paragraphs from long ones — so the identical decision by the identical writer survived in a
+sentence and vanished in a page, which is not a distinction anyone wants a corpus to encode.
+
+**Decision.** The sub-threshold rule is replaced. A pair is a correction when the two sides have
+the same number of words **and every word that differs is at most `TRIVIAL_MAX_WORD_CLUSTERS`
+(1) from the word it replaced**. Nothing is measured against the paragraph.
+
+This is what "typo corrections are not style" meant in ADR-0012; only the mechanism changes. The
+other three rules — unchanged, single-cluster, punctuation — are untouched, and all of them were
+correct against the real text on the first run.
+
+**Alternatives considered.**
+
+- *Lower the ratio.* Moves the boundary, does not create one: a typo and a word choice stay 3×
+  apart at every paragraph length, and 3× is not enough when the absolute figures are 0.7% and
+  2.1%.
+- *Raise the absolute cluster threshold instead.* `TRIVIAL_MAX_CLUSTERS = 3` would drop word
+  choices in short paragraphs, which is the same failure with a different constant.
+- *Require exactly one word to differ.* Would keep a burst-coalesced revision that fixed two
+  typos in one sitting. Every differing word being a misspelling is the same idea without the
+  arbitrary count.
+- *Drop the rule and keep everything.* The single-cluster rule already catches most typos, and
+  this one catches the rest — two letters fixed in one word, a vowel sign and its neighbour. Worth
+  keeping, now that it means something.
+
+**Consequences.**
+
+- Word choices survive at every paragraph length, which is the point.
+- A one-cluster change is still dropped even when it is semantically enormous (`അവൻ` → `അവൾ`).
+  That was already ADR-0012's accepted cost and is unchanged.
+- The paragraph-level distance now only ever answers "at most one cluster", so its cutoff falls
+  from 64 to 2 and the ratio is never computed. The filter got cheaper as well as correcter.
+- `TrivialReason` gains `correction` and loses `sub-threshold`. The reason names are part of what
+  the export reports, and the old name described a mechanism that no longer exists.
+- The thresholds have now been run against real Malayalam prose. They had never been, and
+  `HANDOFF.md` said so; that entry is what prompted the run.

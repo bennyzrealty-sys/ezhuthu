@@ -18,6 +18,9 @@ put the numbers in the commit body.
 | Keystroke to paint | **< 16 ms** | One frame. Above it, typing feels laggy — the worst failure this app could have. |
 | Memory, 100k words | **< 150 MB** | Mid-range Android reclaims background tabs above roughly this. Exceeding it means the app is killed while the writer is in another app, and re-opening costs a cold start. |
 | Search, whole document | **< 250 ms scan** | Not a frame budget — search runs on a deliberate action, not while typing or scrolling. This is the point at which ADR-0015's decision to skip a full-text index stops being defensible and the scan belongs in a Worker. |
+| Time-lapse, open and materialise | **< 2 s** | A Worker start, a cursor over every event, and a full replay — paid once, on a deliberate action. Past this the reader stops believing the button worked. |
+| Time-lapse, one scrub step | **< 400 ms** | Not a frame budget either: the drag is coalesced (ADR-0029), so this bounds how far the document lags the thumb once it settles, not how many positions are drawn. |
+| Corpus export, whole log | **< 5 s** | A batch export nobody is blocked on. The budget exists to catch the *shape* of the walk changing — one cursor becoming one query per block. |
 
 ## Running them
 
@@ -58,6 +61,15 @@ result render; the scan cost quoted below is the measurement minus the debounce.
 shapes are measured: a miss (which scans every block, the honest worst case), a very common word,
 and one that only matches in full through the chillu fold.
 
+**Time-lapse.** Button press → the panel's label showing a paragraph count, then a slider drag to
+the earliest stop → the panel's text changing. Both timed inside the page with a
+`MutationObserver`, not by polling from Node: Playwright's default poll interval is 100 ms, a
+quarter of the scrub budget, and a ruler that coarse reports the same figure for a fast
+implementation and a slow one.
+
+**Corpus export.** Button press → the toolbar reporting a count. The document is the corpus plus
+one revision made through the real editor, so the walk covers all 1,563 blocks.
+
 **Serially.** The `perf` project sets `fullyParallel: false`. Running two budgets at once meant a
 scroll measurement competed with a memory measurement for the same cores, and each number carried
 an inflation that depended on which pair overlapped.
@@ -91,6 +103,16 @@ driven by a 1 Hz sampler that reads a rect for each of the ~12 rendered rows (AD
 write is queued and flushed on a 2 s timer or on `visibilitychange`. Measured against the Phase 3
 numbers, no budget moved.
 
+**Time-lapse** never materialises on the main thread. The replay runs in a Worker, which keeps the
+state and hands back a summary and a window of blocks (ADR-0029) — so history costs the main
+thread what the present costs it, which is one window. Snapshots bound the replay itself
+(ADR-0009), and they are written from idle *after a quiet period*, never from the gap between two
+keystrokes: that gap is idle, and it is the space the next keystroke needs.
+
+**Corpus export** is one cursor over `[docId+blockId+seq]`, which delivers each block's history
+contiguously and in order, holding only the block being walked. 1,563 blocks export in 77 ms. A
+query per block would produce the same file and is the regression this budget is set to catch.
+
 **Search** folds each block's text and looks for the needle in it, without building the map from
 folded offsets back to source offsets. That map is what lets a match be highlighted without
 bisecting a grapheme cluster, and it is the expensive half of a search because it segments the
@@ -104,7 +126,9 @@ the hit limit are counted, not located. Removing that distinction cost 100 ms on
 - Signals batch on a 2 s flush or `visibilitychange` — never a synchronous telemetry write.
 - Never load all block text into memory. If you need document-wide data, use the compact index or
   an IndexedDB cursor.
-- Historical replay (time-lapse) runs in a Web Worker.
+- Historical replay (time-lapse) runs in a Web Worker, and only a window of its result crosses
+  back.
+- Idle work waits for the writer to stop, not merely for an idle callback.
 - Any change to `render/` or `core/` reports perf numbers in the commit body.
 
 ## Recording results

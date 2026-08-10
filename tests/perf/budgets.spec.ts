@@ -28,6 +28,25 @@ const BUDGET = {
   // or scrolling. This is the threshold at which ADR-0015's decision to skip a
   // full-text index stops being defensible and the scan belongs in a Worker.
   searchMs: 250,
+  /*
+   * Opening the panel is the expensive half of time-lapse: a Worker start, a
+   * cursor over every event to build the timeline, and a replay. It happens
+   * once, on a deliberate action, so the budget is the point at which a reader
+   * stops believing the button worked.
+   */
+  timelapseOpenMs: 2_000,
+  /*
+   * A scrub step is not a frame budget either — the drag is coalesced, so what
+   * this bounds is how long the document lags the thumb once it settles. Past
+   * this the slider stops feeling attached to the text.
+   */
+  scrubMs: 400,
+  /*
+   * The corpus is a batch export over the whole log. Nothing waits on it but
+   * the person who asked, and the budget exists to catch the shape of the walk
+   * changing — one cursor becoming one query per block, say.
+   */
+  corpusMs: 5_000,
 };
 
 /** Must match DEBOUNCE_MS in features/search/SearchPanel.tsx. */
@@ -316,4 +335,109 @@ test('search scans the whole document within budget', async ({ page }) => {
    * that would otherwise be invisible to search.
    */
   expect(summaries.chillu).toContain('1,573');
+});
+
+/**
+ * Revise one paragraph, so the log has a revision in it and the timeline has
+ * more than one stop. Through the real editor: a seam that wrote events
+ * directly would measure a path no writer takes, and would also bypass the
+ * projection the editor maintains.
+ */
+async function reviseFirstBlock(page: import('@playwright/test').Page): Promise<void> {
+  const first = page.locator('.block-row').first();
+  await expect(first).not.toHaveText('');
+  await first.click();
+  const editor = page.locator('.block-editor');
+  await editor.fill('തിരുത്തിയ ഖണ്ഡിക — കടൽ ഇളകിമറിഞ്ഞു, ആകാശം ഇരുണ്ടു, കാറ്റ് ഉയർന്നു.');
+  await editor.blur();
+  await expect(page.locator('.block-row').first()).toContainText('തിരുത്തിയ');
+}
+
+test('time-lapse opens and materialises a past state within budget', async ({ page }) => {
+  await seed(page);
+  await reviseFirstBlock(page);
+
+  /*
+   * Measured in the page rather than by polling from Node. Playwright's default
+   * poll interval is 100 ms, which is a quarter of the scrub budget below — a
+   * ruler that coarse would report the same number for a fast implementation
+   * and a slow one.
+   */
+  const openMs = await page.evaluate(async () => {
+    const started = performance.now();
+    const settled = new Promise<number>((resolve) => {
+      const observer = new MutationObserver(() => {
+        const label = document.querySelector('[data-testid="timelapse-label"]');
+        if (label !== null && /\d+ paragraphs/.test(label.textContent ?? '')) {
+          observer.disconnect();
+          resolve(performance.now());
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+
+    document.querySelector<HTMLButtonElement>('[data-testid="timelapse-toggle"]')!.click();
+    return (await settled) - started;
+  });
+
+  const label = await page.getByTestId('timelapse-label').textContent();
+  console.log(`time-lapse open: ${openMs.toFixed(0)}ms  (${label?.trim()})`);
+  expect(openMs).toBeLessThan(BUDGET.timelapseOpenMs);
+
+  // A scrub step: all the way back to the import, which is the longest replay
+  // this document can ask for.
+  const scrubMs = await page.evaluate(async () => {
+    const doc = document.querySelector('[data-testid="timelapse-doc"]')!;
+    const slider = document.querySelector<HTMLInputElement>('[data-testid="timelapse-slider"]')!;
+    const before = doc.textContent ?? '';
+
+    const settled = new Promise<number>((resolve) => {
+      const observer = new MutationObserver(() => {
+        if ((doc.textContent ?? '') !== before) {
+          observer.disconnect();
+          resolve(performance.now());
+        }
+      });
+      observer.observe(doc, { childList: true, subtree: true, characterData: true });
+    });
+
+    const started = performance.now();
+    // React owns the value, so it is set through the prototype and the event
+    // React is listening for is dispatched by hand.
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(slider, '0');
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+
+    return (await settled) - started;
+  });
+
+  console.log(`time-lapse scrub to the earliest stop: ${scrubMs.toFixed(0)}ms`);
+  expect(scrubMs).toBeLessThan(BUDGET.scrubMs);
+});
+
+test('the corpus export walks the whole log within budget', async ({ page }) => {
+  await seed(page);
+  await reviseFirstBlock(page);
+
+  const result = await page.evaluate(async () => {
+    const started = performance.now();
+    const settled = new Promise<string>((resolve) => {
+      const observer = new MutationObserver(() => {
+        const message = document.querySelector('[data-testid="message"]');
+        const shown = message?.textContent ?? '';
+        if (shown.includes('Exported') || shown.includes('revisions')) {
+          observer.disconnect();
+          resolve(shown);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+
+    document.querySelector<HTMLButtonElement>('[data-testid="corpus-export"]')!.click();
+    const message = await settled;
+    return { ms: performance.now() - started, message };
+  });
+
+  console.log(`corpus export: ${result.ms.toFixed(0)}ms · ${result.message}`);
+  expect(result.ms).toBeLessThan(BUDGET.corpusMs);
 });
