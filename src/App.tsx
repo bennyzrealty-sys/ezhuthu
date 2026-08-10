@@ -13,6 +13,7 @@ import { checkProjection, logHeadSeq, repairProjection } from './core/replay';
 import { importText } from './features/io/import';
 import { DocumentView, type DocumentViewHandle } from './render/DocumentView';
 import { SearchPanel } from './features/search/SearchPanel';
+import { BookmarksPanel } from './features/visibility/BookmarksPanel';
 import { ResumeStrip } from './features/resume/ResumeStrip';
 import {
   estimateStorage,
@@ -81,6 +82,7 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [searching, setSearching] = useState(false);
+  const [bookmarking, setBookmarking] = useState(false);
   /*
    * The strip is an opening offer, not a panel. It is shown once per launch —
    * requirement 1 is "on open, return the writer to where he was working" — and
@@ -204,11 +206,26 @@ export default function App() {
           </span>
         )}
         <button
-          onClick={() => (searching ? closeSearch() : setSearching(true))}
+          onClick={() => {
+            if (searching) return closeSearch();
+            setBookmarking(false);
+            setSearching(true);
+          }}
           aria-expanded={searching}
           data-testid="search-toggle"
         >
           {searching ? 'Close search' : 'Search'}
+        </button>
+        <button
+          onClick={() => {
+            if (bookmarking) return setBookmarking(false);
+            closeSearch();
+            setBookmarking(true);
+          }}
+          aria-expanded={bookmarking}
+          data-testid="bookmarks-toggle"
+        >
+          {bookmarking ? 'Close bookmarks' : 'Bookmarks'}
         </button>
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
@@ -301,6 +318,17 @@ export default function App() {
             })
           }
           onClose={closeSearch}
+        />
+      )}
+
+      {bookmarking && (
+        <BookmarksPanel
+          db={db}
+          docId={DOC_ID}
+          // position is a hint the view corrects by id; the store has no opinion
+          // about the rendered index.
+          onReveal={(blockId) => view.current?.reveal({ blockId, position: -1 })}
+          onClose={() => setBookmarking(false)}
         />
       )}
 

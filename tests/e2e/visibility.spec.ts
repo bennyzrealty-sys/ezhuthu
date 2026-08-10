@@ -32,6 +32,56 @@ function minimapDrawnPixels(page: Page): Promise<number> {
 const manyBlocks = (n: number) =>
   Array.from({ length: n }, (_, i) => `ഖണ്ഡിക ${i} — കടൽ ശാന്തമായിരുന്നു.`).join('\n\n');
 
+/**
+ * Seed `times` scroll-back signals for the block whose text contains `needle`,
+ * straight into IndexedDB. The real scroll-back gesture is covered in
+ * signals.spec.ts; here what is under test is the consumer, so the signal is
+ * planted rather than performed. Returns the block id, or null if not found.
+ */
+function seedScrollback(page: Page, needle: string, times: number): Promise<string | null> {
+  return page.evaluate(
+    async ({ needle, times }) => {
+      const open = (): Promise<IDBDatabase> =>
+        new Promise((resolve, reject) => {
+          const r = indexedDB.open('ezhuthu');
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+      const db = await open();
+      const blocks: Array<{ blockId: string; docId: string; text: string; deletedAt?: number }> =
+        await new Promise((resolve, reject) => {
+          const r = db.transaction('blocks').objectStore('blocks').getAll();
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+      const block = blocks.find((b) => b.text.includes(needle) && b.deletedAt === undefined);
+      if (block === undefined) {
+        db.close();
+        return null;
+      }
+      const tx = db.transaction('signals', 'readwrite');
+      const store = tx.objectStore('signals');
+      for (let i = 0; i < times; i++) {
+        store.add({
+          docId: block.docId,
+          blockId: block.blockId,
+          ts: Date.now(),
+          sessionId: 'seed',
+          kind: 'scrollback',
+          value: 3000,
+        });
+      }
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      return block.blockId;
+    },
+    { needle, times },
+  );
+}
+
 test.describe('margin bar (ADR-0005, ADR-0027)', () => {
   test('a freshly imported document carries no bars', async ({ page }) => {
     // Import is not editing. Lighting the whole document the instant it arrives
@@ -161,5 +211,30 @@ test.describe('ghost markers (ADR-0018, ADR-0028)', () => {
     // The text survives in the neighbour, so a ghost would only duplicate it.
     await expect(page.locator('[data-testid="seam"]')).toHaveCount(0);
     await expect(page.locator('.block-row').first()).toContainText('ഒന്ന്രണ്ട്');
+  });
+});
+
+test.describe('scroll-back auto-bookmarks (docs/SIGNALS.md)', () => {
+  test('says so plainly when nothing has been returned to', async ({ page }) => {
+    await importCorpus(page, SMALL_DOC);
+    await page.locator('[data-testid="bookmarks-toggle"]').click();
+    await expect(page.locator('[data-testid="bookmarks-empty"]')).toBeVisible();
+    await expect(page.locator('[data-testid="bookmark"]')).toHaveCount(0);
+  });
+
+  test('lists a returned-to paragraph and jumps to it', async ({ page }) => {
+    await importCorpus(page, manyBlocks(400));
+    const id = await seedScrollback(page, 'ഖണ്ഡിക 300 —', 3);
+    expect(id).not.toBeNull();
+
+    await page.locator('[data-testid="bookmarks-toggle"]').click();
+    const marks = page.locator('[data-testid="bookmark"]');
+    await expect(marks).toHaveCount(1);
+    await expect(marks.first()).toContainText('ഖണ്ഡിക 300');
+    await expect(marks.first()).toContainText('returned to 3 times');
+
+    // Tapping a bookmark jumps the document to that paragraph, far from the top.
+    await marks.first().click();
+    await expect.poll(() => firstRenderedIndex(page)).toBeGreaterThan(250);
   });
 });
