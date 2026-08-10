@@ -107,3 +107,59 @@ test.describe('minimap (ADR-0021)', () => {
     await expect.poll(() => firstRenderedIndex(page)).toBeGreaterThan(before + 50);
   });
 });
+
+test.describe('ghost markers (ADR-0018, ADR-0028)', () => {
+  test('deleting a paragraph leaves a seam that reveals and restores it', async ({ page }) => {
+    await importCorpus(page, SMALL_DOC);
+    await expect(page.locator('.block-row')).toHaveCount(3);
+
+    // Delete the middle paragraph deliberately.
+    await page.locator('.block-row').nth(1).click();
+    await expect(page.locator('.block-editor')).toBeFocused();
+    await page.locator('[data-testid="block-delete"]').click();
+
+    await expect(page.locator('.block-row')).toHaveCount(2);
+    const seam = page.locator('[data-testid="seam"]');
+    await expect(seam).toHaveCount(1);
+
+    // Tapping the seam reveals the deleted text — recoverable from the log
+    // though it is gone from the document.
+    await page.locator('[data-testid="seam-rule"]').click();
+    await expect(page.locator('.seam-text')).toContainText('രണ്ടാം');
+
+    // Restore puts it back where it was.
+    await page.locator('[data-testid="seam-restore"]').click();
+    await expect(page.locator('.block-row')).toHaveCount(3);
+    await expect(page.locator('[data-testid="seam"]')).toHaveCount(0);
+    await expect(page.locator('.block-row').nth(1)).toContainText('രണ്ടാം');
+  });
+
+  test('a deleted paragraph and its seam survive a reload', async ({ page }) => {
+    await importCorpus(page, SMALL_DOC);
+    await page.locator('.block-row').nth(1).click();
+    await page.locator('[data-testid="block-delete"]').click();
+    await expect(page.locator('[data-testid="seam"]')).toHaveCount(1);
+
+    await page.reload();
+    await expect(page.locator('.block-row')).toHaveCount(2);
+    await expect(page.locator('[data-testid="seam"]')).toHaveCount(1);
+  });
+
+  test('a merge is not a deletion and leaves no seam (ADR-0028)', async ({ page }) => {
+    await importCorpus(page, 'ഒന്ന്\n\nരണ്ട്');
+    await expect(page.locator('.block-row')).toHaveCount(2);
+
+    await page.locator('.block-row').nth(1).click();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Backspace'); // merge into the previous block
+    // Wait for the merge to settle before blurring, or blur races the async
+    // merge and acts on the block that is about to unmount.
+    await expect(page.locator('.doc-item')).toHaveCount(1);
+    await page.locator('.block-editor').blur();
+
+    await expect(page.locator('.block-row')).toHaveCount(1);
+    // The text survives in the neighbour, so a ghost would only duplicate it.
+    await expect(page.locator('[data-testid="seam"]')).toHaveCount(0);
+    await expect(page.locator('.block-row').first()).toContainText('ഒന്ന്രണ്ട്');
+  });
+});

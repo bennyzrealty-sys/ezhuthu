@@ -271,12 +271,16 @@ export async function updateBlock(
  * Soft delete. The full text goes into the payload — this is the one place
  * ADR-0012's omission rule does not apply, because ghost-marker restore reads
  * it directly and a deletion is the event we can least afford to lose.
+ *
+ * `mergedInto` marks the deletion as the second half of a merge (ADR-0028): the
+ * text survives in that block, so this deletion must not leave a restorable
+ * ghost. A deliberate delete omits it, and that is what a ghost marker shows.
  */
 export async function deleteBlock(
   db: EzhuthuDB,
   docId: DocId,
   blockId: BlockId,
-  opts: { now?: number } = {},
+  opts: { now?: number; mergedInto?: BlockId } = {},
 ): Promise<BlockEvent> {
   const block = await db.blocks.get(blockId);
   if (block === undefined) throw new Error(`delete: unknown block ${blockId}`);
@@ -284,7 +288,7 @@ export async function deleteBlock(
     docId,
     blockId,
     type: 'delete',
-    payload: { text: block.text },
+    payload: { text: block.text, mergedInto: opts.mergedInto },
     now: opts.now,
   });
 }

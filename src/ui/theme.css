@@ -247,6 +247,16 @@ button:disabled {
 }
 
 /*
+ * Wraps just the block — margin bar plus row-or-editor — so the bar aligns with
+ * the text and not with a ghost-marker seam that may sit above it in the same
+ * item. Relative, so the bar and the delete affordance position against the
+ * block rather than the whole item.
+ */
+.doc-block {
+  position: relative;
+}
+
+/*
  * The margin intensity bar (ADR-0005, ADR-0006, ADR-0027).
  *
  * Two dimensions in 4 px: opacity is recency, saturation is revision count.
@@ -254,14 +264,15 @@ button:disabled {
  * saturation, so the signal is opacity and saturation and never hue, which is
  * what makes it colour-blind safe (ADR-0005).
  *
- * Absolutely positioned in the item's left gutter (`.doc-item` has 1rem of
- * padding), so it sits clear of the text and cannot reflow a single glyph —
- * the same reason the search mark carries no metrics. Non-interactive: it is a
- * peripheral-vision signal, not a target.
+ * Absolutely positioned in the left gutter — `.doc-block` sits inside the item's
+ * 1rem padding, so the bar reaches back out into that gutter with a negative
+ * offset. It sits clear of the text and cannot reflow a single glyph, the same
+ * reason the search mark carries no metrics. Non-interactive: a peripheral-
+ * vision signal, not a target.
  */
 .block-mark {
   position: absolute;
-  left: 0.25rem;
+  left: -0.75rem;
   top: 0.5rem;
   bottom: 0.5rem;
   width: 4px;
@@ -273,6 +284,107 @@ button:disabled {
   );
   opacity: var(--mark-opacity, 0);
   pointer-events: none;
+}
+
+/*
+ * The deliberate-delete affordance, shown only while a block is focused. A
+ * genuine deletion — the kind that leaves a ghost (ADR-0018) — as opposed to
+ * the merge a Backspace at the start performs. Pinned to the block's top-right
+ * so it never enters the text's flow.
+ */
+.block-delete {
+  position: absolute;
+  top: 0.35rem;
+  right: 0;
+  min-height: 32px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--rule));
+  background: var(--surface);
+}
+
+/* ---------------------------------------------------------------------------
+   Ghost markers — the seam left by a deletion (ADR-0018)
+   --------------------------------------------------------------------------- */
+
+.seam {
+  padding: 0.1rem 0;
+}
+
+/*
+ * Collapsed, a 2 px rule the width of the text: quiet, but present, so a
+ * deletion is not invisible. The whole rule is the tap target.
+ */
+.seam-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink-muted);
+}
+
+.seam-rule::before {
+  content: '';
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.seam-count {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.seam.is-open .seam-rule::before {
+  background: var(--danger);
+}
+
+.seam-ghosts {
+  margin: 0.35rem 0 0.15rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.seam-ghost {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  border-left: 2px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  padding: 0.1rem 0 0.1rem 0.6rem;
+}
+
+/*
+ * The recovered text is set in the document face so it reads as the paragraph
+ * it will become again, but muted — it is not part of the document yet.
+ */
+.seam-text {
+  flex: 1;
+  margin: 0;
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.seam-restore {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
 }
 
 /*

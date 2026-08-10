@@ -190,6 +190,12 @@ export function applyEvent(state: DocState, event: BlockEvent): DocState {
       // Soft delete. Record and text stay, position stays (ADR-0018).
       block.deletedAt = event.ts;
       block.updatedAt = event.ts;
+      // A merge records where its text went, so ghost markers can tell a merge
+      // apart from a deliberate deletion and not offer to restore text that is
+      // already living in the neighbour (ADR-0028).
+      if (event.payload.mergedInto !== undefined) {
+        block.meta.mergedInto = event.payload.mergedInto;
+      }
       break;
     }
 
