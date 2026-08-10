@@ -193,6 +193,27 @@ describe('delete and restore', () => {
     applyEvent(s, f.make('insert', 'b', { afterBlockId: 'c' }));
     expect(texts(s)).toEqual(['one', 'three', 'two']);
   });
+
+  it('records a merge on the deleted block so it leaves no ghost (ADR-0028)', () => {
+    const f = eventFactory();
+    const s = foldEvents(emptyState('doc-1'), [
+      f.make('insert', 'a', { text: 'one' }),
+      f.make('insert', 'b', { text: 'two' }),
+    ]);
+    // A deliberate delete carries no mergedInto; a merge names the neighbour.
+    applyEvent(s, f.make('delete', 'b', { text: 'two', mergedInto: 'a' }));
+    expect(s.blocks.get('b')!.meta.mergedInto).toBe('a');
+  });
+
+  it('a deliberate delete carries no merge marker', () => {
+    const f = eventFactory();
+    const s = foldEvents(emptyState('doc-1'), [
+      f.make('insert', 'a', { text: 'one' }),
+      f.make('insert', 'b', { text: 'two' }),
+    ]);
+    applyEvent(s, f.make('delete', 'b', { text: 'two' }));
+    expect(s.blocks.get('b')!.meta.mergedInto).toBeUndefined();
+  });
 });
 
 describe('move', () => {

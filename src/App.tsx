@@ -13,6 +13,8 @@ import { checkProjection, logHeadSeq, repairProjection } from './core/replay';
 import { importText } from './features/io/import';
 import { DocumentView, type DocumentViewHandle } from './render/DocumentView';
 import { SearchPanel } from './features/search/SearchPanel';
+import { BookmarksPanel } from './features/visibility/BookmarksPanel';
+import { ResumeStrip } from './features/resume/ResumeStrip';
 import {
   estimateStorage,
   getBackupStatus,
@@ -25,6 +27,13 @@ import { pruneSignals } from './signals/queries';
 import { SnapshotScheduler } from './features/timelapse/snapshotting';
 import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
 import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
+import {
+  DEFAULT_FEEDBACK,
+  hapticsSupported,
+  loadFeedback,
+  saveFeedback,
+  type FeedbackSettings,
+} from './features/visibility/feedback';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -84,6 +93,16 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [searching, setSearching] = useState(false);
   const [timelapsing, setTimelapsing] = useState(false);
+  const [bookmarking, setBookmarking] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
+  /*
+   * The strip is an opening offer, not a panel. It is shown once per launch —
+   * requirement 1 is "on open, return the writer to where he was working" — and
+   * once he has gone somewhere, or said no, it is gone until the next launch.
+   * It renders nothing at all until a destination resolves, so a fresh install
+   * never sees it.
+   */
+  const [resuming, setResuming] = useState(true);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const view = useRef<DocumentViewHandle | null>(null);
 
@@ -155,6 +174,22 @@ export default function App() {
     pruned.current = true;
     void pruneSignals(db).catch(() => undefined);
   }, [status]);
+
+  // Scroll-past feedback preferences (ADR-0022), off by default.
+  useEffect(() => {
+    void loadFeedback(db).then(setFeedback);
+  }, []);
+
+  const updateFeedback = useCallback(
+    (patch: Partial<FeedbackSettings>) => {
+      setFeedback((current) => {
+        const next = { ...current, ...patch };
+        void saveFeedback(db, next);
+        return next;
+      });
+    },
+    [],
+  );
 
   const onImport = useCallback(
     async (file: File) => {
@@ -257,11 +292,26 @@ export default function App() {
           </span>
         )}
         <button
-          onClick={() => (searching ? closeSearch() : setSearching(true))}
+          onClick={() => {
+            if (searching) return closeSearch();
+            setBookmarking(false);
+            setSearching(true);
+          }}
           aria-expanded={searching}
           data-testid="search-toggle"
         >
           {searching ? 'Close search' : 'Search'}
+        </button>
+        <button
+          onClick={() => {
+            if (bookmarking) return setBookmarking(false);
+            closeSearch();
+            setBookmarking(true);
+          }}
+          aria-expanded={bookmarking}
+          data-testid="bookmarks-toggle"
+        >
+          {bookmarking ? 'Close bookmarks' : 'Bookmarks'}
         </button>
         <button
           onClick={() => setTimelapsing(true)}
@@ -342,7 +392,53 @@ export default function App() {
               </p>
             )}
           </section>
+
+          <section className="card">
+            <h2>Scrolling feedback</h2>
+            <label className="toggle-row">
+              <span>
+                Haptic tick past edits
+                {!hapticsSupported() && (
+                  <span className="note" style={{ margin: 0 }}>
+                    {' '}
+                    — unavailable on this device
+                  </span>
+                )}
+              </span>
+              <input
+                type="checkbox"
+                checked={feedback.haptics && hapticsSupported()}
+                disabled={!hapticsSupported()}
+                data-testid="feedback-haptics"
+                onChange={(e) => updateFeedback({ haptics: e.target.checked })}
+              />
+            </label>
+            <label className="toggle-row">
+              <span>Visual pulse past edits</span>
+              <input
+                type="checkbox"
+                checked={feedback.visualPulse}
+                data-testid="feedback-visual"
+                onChange={(e) => updateFeedback({ visualPulse: e.target.checked })}
+              />
+            </label>
+          </section>
         </div>
+      )}
+
+      {resuming && (
+        <ResumeStrip
+          db={db}
+          docId={DOC_ID}
+          onGo={(destination) => {
+            setResuming(false);
+            // `position` is a hint the view corrects by id when it is wrong,
+            // and here it is always wrong — the destinations are resolved from
+            // the store, which has no opinion about the rendered index.
+            view.current?.reveal({ blockId: destination.blockId, position: -1 });
+          }}
+          onDismiss={() => setResuming(false)}
+        />
       )}
 
       {searching && (
@@ -360,7 +456,30 @@ export default function App() {
         />
       )}
 
-      <DocumentView ref={view} key={reloadKey} db={db} docId={DOC_ID} onChange={onDocumentChange} />
+      {bookmarking && (
+        <BookmarksPanel
+          db={db}
+          docId={DOC_ID}
+          // position is a hint the view corrects by id; the store has no opinion
+          // about the rendered index.
+          onReveal={(blockId) => view.current?.reveal({ blockId, position: -1 })}
+          onClose={() => setBookmarking(false)}
+        />
+      )}
+
+      {/*
+        * `onDocumentChange` rather than `refresh`: Phase 7 also asks for a
+        * snapshot after every commit, which is what gives the scrub its anchors
+        * (ADR-0009).
+        */}
+      <DocumentView
+        ref={view}
+        key={reloadKey}
+        db={db}
+        docId={DOC_ID}
+        onChange={onDocumentChange}
+        feedback={feedback}
+      />
 
       {/*
         * Mounted only while open, so the Worker exists only while it is being
