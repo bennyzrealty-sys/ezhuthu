@@ -32,6 +32,28 @@ function minimapDrawnPixels(page: Page): Promise<number> {
 const manyBlocks = (n: number) =>
   Array.from({ length: n }, (_, i) => `ഖണ്ഡിക ${i} — കടൽ ശാന്തമായിരുന്നു.`).join('\n\n');
 
+/** Read the persisted visual-pulse preference straight from IndexedDB. */
+function persistedVisualPulse(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const open = (): Promise<IDBDatabase> =>
+      new Promise((resolve, reject) => {
+        const r = indexedDB.open('ezhuthu');
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+    const db = await open();
+    const setting: { value?: { visualPulse?: boolean } } | undefined = await new Promise(
+      (resolve, reject) => {
+        const r = db.transaction('settings').objectStore('settings').get('visibility.feedback');
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      },
+    );
+    db.close();
+    return setting?.value?.visualPulse === true;
+  });
+}
+
 /**
  * Seed `times` scroll-back signals for the block whose text contains `needle`,
  * straight into IndexedDB. The real scroll-back gesture is covered in
@@ -253,6 +275,10 @@ test.describe('scroll-past feedback (ADR-0022)', () => {
     await expect(haptics).toBeVisible();
 
     await visual.check();
+    // Wait for the write to actually land before reloading. The toggle's save is
+    // fire-and-forget, so reloading immediately races it — the same "act only
+    // after the async value commits" trap the HANDOFF warns about.
+    await expect.poll(() => persistedVisualPulse(page)).toBe(true);
     await page.reload();
     await page.locator('button', { hasText: 'Status' }).click();
     await expect(page.locator('[data-testid="feedback-visual"]')).toBeChecked();
