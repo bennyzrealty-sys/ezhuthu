@@ -103,12 +103,17 @@ export function emptyTally(): TrivialTally {
   };
 }
 
-/** Keep the pairs worth exporting, counting what went and why. */
-export function filterTrivial(
-  pairs: readonly EditPair[],
+/**
+ * Keep the pairs worth exporting, counting what went and why.
+ *
+ * The tally is threaded through rather than returned fresh, so an export can
+ * accumulate one across every block it walks.
+ */
+export function filterTrivial<T extends Pick<EditPair, 'before' | 'after'>>(
+  pairs: readonly T[],
   tally: TrivialTally = emptyTally(),
-): { kept: EditPair[]; tally: TrivialTally } {
-  const kept: EditPair[] = [];
+): { kept: T[]; tally: TrivialTally } {
+  const kept: T[] = [];
   for (const pair of pairs) {
     const reason = trivialReason(pair);
     if (reason === null) kept.push(pair);

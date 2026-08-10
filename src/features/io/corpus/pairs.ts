@@ -43,6 +43,7 @@ export interface Revision {
 export interface EditPair {
   before: string;
   after: string;
+  /** Wall clock, for the record. Display only — it orders nothing (ADR-0020). */
   ts: number;
   /**
    * 1-based position of this revision in the block's history, counted AFTER
@@ -54,6 +55,17 @@ export interface EditPair {
    * record says.
    */
   revisionIndex: number;
+}
+
+/**
+ * A pair with the log position it closed at.
+ *
+ * Carried so the export can emit in the log's own total order rather than by
+ * `ts`, which is a wall clock and orders nothing (ADR-0020). `seq` is not part
+ * of the exported record.
+ */
+export interface OrderedEditPair extends EditPair {
+  seq: number;
 }
 
 /**
@@ -150,9 +162,9 @@ export interface CoalesceOptions {
 export function coalesceRevisions(
   revisions: readonly Revision[],
   options: CoalesceOptions = {},
-): EditPair[] {
+): OrderedEditPair[] {
   const windowMs = options.windowMs ?? COALESCE_WINDOW_MS;
-  const out: EditPair[] = [];
+  const out: OrderedEditPair[] = [];
 
   let open: Revision | null = null;
   let last: Revision | null = null;
@@ -165,6 +177,7 @@ export function coalesceRevisions(
       // The moment the revision finished, not the moment it started: it is
       // the state at the end that the pair is about.
       ts: last.ts,
+      seq: last.seq,
       revisionIndex: out.length + 1,
     });
     open = null;
@@ -194,6 +207,6 @@ export function coalesceRevisions(
 export function pairsForBlock(
   events: readonly BlockEvent[],
   options: CoalesceOptions = {},
-): EditPair[] {
+): OrderedEditPair[] {
   return coalesceRevisions(revisionsForBlock(events), options);
 }
