@@ -29,25 +29,18 @@ export const COALESCE_WINDOW_MS = 5 * 60 * 1000;
 export const TRIVIAL_MAX_CLUSTERS = 1;
 
 /**
- * Below this fraction of the paragraph changed — *and* with no word added or
- * removed — the pair is a correction rather than a rewrite.
+ * A word that changed by at most this much did not become a different word — it
+ * became a correctly spelled version of the same one (ADR-0032).
  *
- * Both halves are needed. The fraction alone would drop a paragraph rewritten
- * one clause at a time; the word-boundary test alone would keep every accent
- * fix, since correcting a vowel sign adds and removes no words at all.
+ * This is measured on the WORD, not on the paragraph, and the difference is the
+ * whole point. A proportional threshold cannot separate a typo from a word
+ * choice, because both are small next to the paragraph containing them: in real
+ * Malayalam prose — 116 paragraphs of a narration script, averaging 145 grapheme
+ * clusters — fixing അയാൾ and replacing കപ്പൽ with നൗക come out at 0.7% and 2.1%
+ * of the paragraph. Any cutoff that drops the first drops the second, and the
+ * second is exactly what ADR-0016 exists to collect.
  *
- * Note what this measures is proportional, so the same edit is judged
- * differently in a sentence than in a page: one word swapped in a short
- * paragraph survives and the same swap inside a very long one does not. That is
- * deliberate — a corpus of sentence-level revision is what ADR-0016 is after —
- * but it is the threshold here with the least evidence behind it, and it has
- * never been run against a real manuscript.
+ * At the word, they are 1 cluster apart and 3 apart, and the question answers
+ * itself.
  */
-export const TRIVIAL_MAX_RATIO = 0.05;
-
-/**
- * Cutoff handed to the distance function. Anything past it is a real change and
- * the exact figure is never used, so measuring it would be work spent to reach
- * the same verdict.
- */
-export const DISTANCE_CUTOFF_CLUSTERS = 64;
+export const TRIVIAL_MAX_WORD_CLUSTERS = 1;

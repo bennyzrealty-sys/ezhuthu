@@ -14,14 +14,10 @@
  */
 
 import { normalizeForCompare } from '../../../text/normalize';
-import { clusterChange } from '../../../text/distance';
-import { countWords, isEffectivelyEmpty } from '../../../text/count';
+import { clusterDistance } from '../../../text/distance';
+import { isEffectivelyEmpty } from '../../../text/count';
 import type { EditPair } from './pairs';
-import {
-  DISTANCE_CUTOFF_CLUSTERS,
-  TRIVIAL_MAX_CLUSTERS,
-  TRIVIAL_MAX_RATIO,
-} from './constants';
+import { TRIVIAL_MAX_CLUSTERS, TRIVIAL_MAX_WORD_CLUSTERS } from './constants';
 
 export type TrivialReason =
   /** The two sides are the same text once folded. Re-encoding, or an undo. */
@@ -32,8 +28,8 @@ export type TrivialReason =
   | 'single-cluster'
   /** Only spacing and punctuation moved. */
   | 'punctuation'
-  /** A small proportional change that added and removed no words. */
-  | 'sub-threshold';
+  /** Every word that changed is a misspelling of the word it replaced. */
+  | 'correction';
 
 /**
  * Everything except letters, marks, digits and the zero-width joiners.
@@ -47,6 +43,38 @@ const NOT_WORD_CHAR = /[^\p{L}\p{M}\p{N}‌‍]+/gu;
 
 function skeleton(text: string): string {
   return normalizeForCompare(text).replace(NOT_WORD_CHAR, '');
+}
+
+/** Folded words, in order. Splitting on whitespace, as `countWords` does. */
+function words(text: string): string[] {
+  const folded = normalizeForCompare(text).trim();
+  return folded === '' ? [] : folded.split(/\s+/);
+}
+
+/**
+ * Did every word that changed merely change its spelling?
+ *
+ * Requires the same number of words, so nothing was added or taken away, and
+ * then asks of each differing pair whether the second is a near-miss of the
+ * first. That is what separates a typo from a word choice, and it is a question
+ * about the WORD — at paragraph scale both changes are a rounding error
+ * (ADR-0032).
+ */
+function everyChangedWordIsAMisspelling(before: string, after: string): boolean {
+  const from = words(before);
+  const to = words(after);
+  if (from.length !== to.length || from.length === 0) return false;
+
+  let changed = 0;
+  for (const [i, word] of from.entries()) {
+    const other = to[i]!;
+    if (word === other) continue;
+    changed += 1;
+    if (clusterDistance(word, other, { max: TRIVIAL_MAX_WORD_CLUSTERS }) > TRIVIAL_MAX_WORD_CLUSTERS) {
+      return false;
+    }
+  }
+  return changed > 0;
 }
 
 /**
@@ -69,19 +97,18 @@ export function trivialReason(pair: Pick<EditPair, 'before' | 'after'>): Trivial
   // keeps deletions out of the pairs at all (see pairs.ts).
   if (isEffectivelyEmpty(before) || isEffectivelyEmpty(after)) return 'empty';
 
-  const change = clusterChange(before, after, { max: DISTANCE_CUTOFF_CLUSTERS });
-  if (change.distance <= TRIVIAL_MAX_CLUSTERS) return 'single-cluster';
+  // Only whether it is at most one cluster is ever asked, so the cutoff is set
+  // to just past the answer rather than to a figure that would have to be
+  // computed exactly and then thrown away.
+  if (clusterDistance(before, after, { max: TRIVIAL_MAX_CLUSTERS }) <= TRIVIAL_MAX_CLUSTERS) {
+    return 'single-cluster';
+  }
 
   // Reflowing, joining sentences, fixing a stray space. The letters are
   // untouched, so whatever changed was not the prose.
   if (skeleton(before) === skeleton(after)) return 'punctuation';
 
-  if (!change.exceeded && change.ratio < TRIVIAL_MAX_RATIO) {
-    // Words neither added nor removed: the change stayed inside the words that
-    // were already there, which is the shape of a correction rather than a
-    // rewrite.
-    if (countWords(before) === countWords(after)) return 'sub-threshold';
-  }
+  if (everyChangedWordIsAMisspelling(before, after)) return 'correction';
 
   return null;
 }
@@ -99,7 +126,7 @@ export function emptyTally(): TrivialTally {
     empty: 0,
     'single-cluster': 0,
     punctuation: 0,
-    'sub-threshold': 0,
+    correction: 0,
   };
 }
 

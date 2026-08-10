@@ -41,13 +41,11 @@ describe('what the corpus filter drops', () => {
     expect(trivialReason(pair('ഒന്ന്  രണ്ട്   മൂന്ന്', 'ഒന്ന് രണ്ട് മൂന്ന്'))).toBe('punctuation');
   });
 
-  it('drops a small correction inside a long paragraph that moved no words', () => {
-    // Two clusters, so the single-cluster rule does not reach it; the words are
-    // the same in number, so nothing was added or taken away.
+  it('drops two typos in one paragraph as the corrections they are', () => {
+    // Two clusters in total, so the single-cluster rule does not reach it, and
+    // each changed word is one cluster from the word it replaced.
     const long = 'സ്ത്രീകൾ ന്യായം ചോദിച്ചു. '.repeat(20);
-    expect(trivialReason(pair(`${long}അവർ ചോദിച്ചു.`, `${long}അവൾ ചോദിച്ചൂ.`))).toBe(
-      'sub-threshold',
-    );
+    expect(trivialReason(pair(`${long}അവർ ചോദിച്ചു.`, `${long}അവൾ ചോദിച്ചൂ.`))).toBe('correction');
   });
 });
 
@@ -66,10 +64,20 @@ describe('what the corpus filter keeps', () => {
     ).toBeNull();
   });
 
-  it('keeps a word swapped in a sentence-length paragraph', () => {
-    // The proportional threshold is what decides this, and it decides it
-    // differently in a page — see the note on TRIVIAL_MAX_RATIO.
+  it('keeps a word swapped, at any paragraph length', () => {
+    /*
+     * The case that sent ADR-0032 back to the drawing board. Judged against the
+     * paragraph, a word swap is 2% of a real one and a typo is 0.7% — no cutoff
+     * separates them. Judged against the WORD, they are 3 clusters apart and 1.
+     *
+     * Both lengths here, because the proportional rule this replaced kept the
+     * short one and dropped the long one, which meant the same decision by the
+     * same writer survived or vanished depending on the paragraph it was in.
+     */
     expect(trivialReason(pair('മരം വളർന്നു.', 'വൃക്ഷം വളർന്നു.'))).toBeNull();
+
+    const long = 'സ്ത്രീകൾ ന്യായം ചോദിച്ചു, ആരും മറുപടി പറഞ്ഞില്ല. '.repeat(6);
+    expect(trivialReason(pair(`${long}കപ്പൽ അകന്നു.`, `${long}നൗക അകന്നു.`))).toBeNull();
   });
 
   it('keeps a ZWNJ change, and never calls it punctuation', () => {
@@ -105,6 +113,7 @@ describe('filtering a batch', () => {
     expect(tally.unchanged).toBe(1);
     expect(tally['single-cluster']).toBe(1);
     expect(tally.punctuation).toBe(0);
+    expect(tally.correction).toBe(0);
   });
 
   it('agrees with isTrivial', () => {
