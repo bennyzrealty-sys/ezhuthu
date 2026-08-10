@@ -8,15 +8,18 @@
  * over seq would spend most of its travel inside a single paste, and a slider
  * over `ts` would spend most of its travel in an empty summer.
  *
- * So the slider addresses *stops*: the moments the document was left in a state
- * worth looking at. One at the end of every writing session, and enough inside
- * a long session that a single sitting is still scrubbable.
+ * So the slider addresses *stops*: the distinct instants at which the document
+ * existed. Events written in one transaction share a `ts` and are one instant —
+ * an import is a single stop, not sixteen hundred — while each committed edit
+ * is its own. Session ends survive thinning in preference to anything else,
+ * because a state the writer chose to leave the document in is worth more than
+ * one a counter produced.
  *
  * PURE, and time is a parameter — there is no `Date.now()` here, which is what
  * lets the tests drive a year of writing in a millisecond.
  */
 
-import { EVENTS_PER_STOP, MAX_STOPS, SESSION_GAP_MS } from './constants';
+import { MAX_STOPS, SESSION_GAP_MS } from './constants';
 
 /** What the timeline needs from an event. Never the payload. */
 export interface EventSample {
@@ -49,7 +52,6 @@ export const EMPTY_TIMELINE: Timeline = { stops: [], sessions: 0, headSeq: 0 };
 
 export interface TimelineOptions {
   sessionGapMs?: number;
-  eventsPerStop?: number;
   maxStops?: number;
 }
 
@@ -65,7 +67,6 @@ export function buildTimeline(
   options: TimelineOptions = {},
 ): Timeline {
   const sessionGapMs = options.sessionGapMs ?? SESSION_GAP_MS;
-  const eventsPerStop = options.eventsPerStop ?? EVENTS_PER_STOP;
   const maxStops = options.maxStops ?? MAX_STOPS;
 
   if (samples.length === 0) return EMPTY_TIMELINE;
@@ -87,7 +88,13 @@ export function buildTimeline(
     const endsSession =
       next === undefined || next.sessionId !== sample.sessionId || next.ts - sample.ts > sessionGapMs;
 
-    if (endsSession || sinceStop >= eventsPerStop) {
+    /*
+     * One stop per instant. Events written in one transaction carry one `ts`,
+     * so an import contributes a single stop rather than sixteen hundred —
+     * without this the slider spends nearly all its travel inside a paste,
+     * where there is no intermediate state anybody wrote or could have seen.
+     */
+    if (endsSession || next === undefined || next.ts !== sample.ts) {
       candidates.push({ seq: sample.seq, ts: sample.ts, events: sinceStop, endsSession });
       sinceStop = 0;
     }
@@ -108,7 +115,7 @@ export function buildTimeline(
 function thin(stops: readonly TimelineStop[], limit: number): TimelineStop[] {
   if (stops.length <= limit || limit < 1) return [...stops];
 
-  const kept: TimelineStop[] = [];
+  const chosen: number[] = [];
   const slot = stops.length / limit;
 
   for (let i = 0; i < limit; i += 1) {
@@ -118,22 +125,30 @@ function thin(stops: readonly TimelineStop[], limit: number): TimelineStop[] {
 
     // The latest session end in this slot, or its last stop if it holds none.
     // `findLast` would say this, and is ES2023; the build targets ES2022.
-    let chosen = stops[to - 1]!;
+    let pick = to - 1;
     for (let j = to - 1; j >= from; j -= 1) {
       if (stops[j]!.endsSession) {
-        chosen = stops[j]!;
+        pick = j;
         break;
       }
     }
-    kept.push(chosen);
+    if (chosen.at(-1) !== pick) chosen.push(pick);
   }
 
-  const last = stops.at(-1)!;
-  if (kept.at(-1)!.seq !== last.seq) kept[kept.length - 1] = last;
+  // The present is kept unconditionally: a scrub that cannot be dragged back
+  // to now is a trap.
+  const last = stops.length - 1;
+  if (chosen.at(-1) !== last) chosen[chosen.length - 1] = last;
 
-  // Two slots can pick the same stop when a session end is the only member of
-  // both; the seq is what identifies a stop, so dedupe on it.
-  return kept.filter((stop, i) => i === 0 || stop.seq !== kept[i - 1]!.seq);
+  // `events` is restated over the stops that survived, so it still means "since
+  // the one before this" rather than "since a stop that is no longer here".
+  let previous = -1;
+  return chosen.map((at) => {
+    let events = 0;
+    for (let j = previous + 1; j <= at; j += 1) events += stops[j]!.events;
+    previous = at;
+    return { ...stops[at]!, events };
+  });
 }
 
 /** The stop at or before `seq`, or the first stop when `seq` precedes them all. */

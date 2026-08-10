@@ -16,15 +16,6 @@
 export const SESSION_GAP_MS = 30 * 60 * 1000;
 
 /**
- * Extra stops inside a long session, so a single sitting is still scrubbable.
- *
- * Without this an import — one session, thousands of events, no pauses — gives
- * the scrub exactly one position, and the feature appears broken on the most
- * common way of getting a document into the app.
- */
-export const EVENTS_PER_STOP = 100;
-
-/**
  * Upper bound on stops. Past this the slider has more positions than a thumb
  * can address and every extra one costs a replay to visit.
  */

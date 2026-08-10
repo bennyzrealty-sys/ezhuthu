@@ -9,13 +9,18 @@ import { SESSION_GAP_MS } from '@/features/timelapse/constants';
 
 const T0 = 1_700_000_000_000;
 
-/** `count` events one second apart, in one session. */
+/** `count` commits one second apart, in one session. */
 function burst(from: number, count: number, ts: number, sessionId = 'a'): EventSample[] {
   return Array.from({ length: count }, (_, i) => ({
     seq: from + i,
     ts: ts + i * 1_000,
     sessionId,
   }));
+}
+
+/** `count` events written in one transaction: one instant, one `ts`. */
+function transaction(from: number, count: number, ts: number, sessionId = 'a'): EventSample[] {
+  return Array.from({ length: count }, (_, i) => ({ seq: from + i, ts, sessionId }));
 }
 
 describe('building a timeline', () => {
@@ -25,6 +30,23 @@ describe('building a timeline', () => {
     expect(timeline.headSeq).toBe(0);
   });
 
+  it('gives an import one stop, not sixteen hundred', () => {
+    // Events written in one transaction share a ts. There is no intermediate
+    // state anybody wrote or could have seen, and a slider that spends its
+    // whole travel inside a paste is the failure this rule exists to prevent.
+    const timeline = buildTimeline(transaction(1, 1_563, T0));
+
+    expect(timeline.stops).toHaveLength(1);
+    expect(timeline.stops[0]).toMatchObject({ seq: 1_563, events: 1_563 });
+  });
+
+  it('gives each committed edit its own stop', () => {
+    const timeline = buildTimeline([...transaction(1, 3, T0), ...burst(4, 4, T0 + 10_000)]);
+
+    // The import, then one stop per commit.
+    expect(timeline.stops.map((s) => s.seq)).toEqual([3, 4, 5, 6, 7]);
+  });
+
   it('ends a stop where the writer put the document down', () => {
     const morning = burst(1, 5, T0);
     const evening = burst(6, 5, T0 + SESSION_GAP_MS * 4);
@@ -32,35 +54,23 @@ describe('building a timeline', () => {
     const timeline = buildTimeline([...morning, ...evening]);
 
     expect(timeline.sessions).toBe(2);
-    expect(timeline.stops.map((s) => s.seq)).toEqual([5, 10]);
-    expect(timeline.stops.every((s) => s.endsSession)).toBe(true);
+    expect(timeline.stops.filter((s) => s.endsSession).map((s) => s.seq)).toEqual([5, 10]);
   });
 
   it('starts a new session when the app was relaunched', () => {
     // Same instant, different sessionId: two launches, and the state at the end
     // of each is a state the writer left.
-    const first = burst(1, 3, T0, 'launch-1');
-    const second = burst(4, 3, T0 + 3_000, 'launch-2');
+    const first = transaction(1, 3, T0, 'launch-1');
+    const second = transaction(4, 3, T0, 'launch-2');
 
     const timeline = buildTimeline([...first, ...second]);
     expect(timeline.sessions).toBe(2);
     expect(timeline.stops.map((s) => s.seq)).toEqual([3, 6]);
   });
 
-  it('subdivides a long session so one sitting is still scrubbable', () => {
-    // An import: one session, no pauses. Without extra stops the scrub has a
-    // single position on the commonest way of getting a document into the app.
-    const timeline = buildTimeline(burst(1, 1_000, T0), { eventsPerStop: 100 });
-
-    expect(timeline.sessions).toBe(1);
-    expect(timeline.stops).toHaveLength(10);
-    expect(timeline.stops.at(-1)!.seq).toBe(1_000);
-    expect(timeline.stops.filter((s) => s.endsSession)).toHaveLength(1);
-  });
-
   it('counts the events each stop covers', () => {
-    const timeline = buildTimeline(burst(1, 250, T0), { eventsPerStop: 100 });
-    expect(timeline.stops.map((s) => s.events)).toEqual([100, 100, 50]);
+    const timeline = buildTimeline([...transaction(1, 10, T0), ...burst(11, 3, T0 + 5_000)]);
+    expect(timeline.stops.map((s) => s.events)).toEqual([10, 1, 1, 1]);
   });
 
   it('does not treat a clock that moved backwards as a pause', () => {
@@ -74,11 +84,11 @@ describe('building a timeline', () => {
     ];
 
     expect(buildTimeline(samples).sessions).toBe(1);
-    expect(buildTimeline(samples).stops.map((s) => s.seq)).toEqual([3]);
+    expect(buildTimeline(samples).stops.map((s) => s.endsSession)).toEqual([false, false, true]);
   });
 
   it('always ends at the present', () => {
-    const timeline = buildTimeline(burst(1, 5_000, T0), { eventsPerStop: 10, maxStops: 20 });
+    const timeline = buildTimeline(burst(1, 5_000, T0), { maxStops: 20 });
     expect(timeline.stops.at(-1)!.seq).toBe(5_000);
     expect(timeline.headSeq).toBe(5_000);
   });
@@ -86,43 +96,49 @@ describe('building a timeline', () => {
 
 describe('thinning', () => {
   it('never exceeds the cap', () => {
-    const timeline = buildTimeline(burst(1, 10_000, T0), { eventsPerStop: 1, maxStops: 50 });
+    const timeline = buildTimeline(burst(1, 10_000, T0), { maxStops: 50 });
     expect(timeline.stops.length).toBeLessThanOrEqual(50);
   });
 
   it('prefers the stop the writer chose over the one the counter produced', () => {
-    // Three sessions of ten events each, thinned to three stops: the survivors
-    // should be the session ends, not arbitrary mid-session positions.
+    // Three sessions of ten commits each, thinned to three stops: the survivors
+    // should be the session ends.
     const samples = [
       ...burst(1, 10, T0, 'a'),
       ...burst(11, 10, T0 + SESSION_GAP_MS * 3, 'b'),
       ...burst(21, 10, T0 + SESSION_GAP_MS * 6, 'c'),
     ];
 
-    const timeline = buildTimeline(samples, { eventsPerStop: 2, maxStops: 3 });
+    const timeline = buildTimeline(samples, { maxStops: 3 });
     expect(timeline.stops.map((s) => s.seq)).toEqual([10, 20, 30]);
+  });
+
+  it('restates the event counts over the stops that survived', () => {
+    // Otherwise "events" means "since a stop that is no longer on the slider".
+    const timeline = buildTimeline(burst(1, 100, T0), { maxStops: 4 });
+    const total = timeline.stops.reduce((sum, stop) => sum + stop.events, 0);
+    expect(total).toBe(100);
   });
 
   it('leaves a short timeline alone', () => {
-    const timeline = buildTimeline(burst(1, 30, T0), { eventsPerStop: 10, maxStops: 100 });
-    expect(timeline.stops.map((s) => s.seq)).toEqual([10, 20, 30]);
+    const timeline = buildTimeline(burst(1, 3, T0), { maxStops: 100 });
+    expect(timeline.stops.map((s) => s.seq)).toEqual([1, 2, 3]);
   });
 
   it('emits no duplicate positions', () => {
-    const timeline = buildTimeline(burst(1, 300, T0), { eventsPerStop: 100, maxStops: 10 });
+    const timeline = buildTimeline(burst(1, 300, T0), { maxStops: 10 });
     const seqs = timeline.stops.map((s) => s.seq);
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 });
 
 describe('locating a seq', () => {
-  const timeline = buildTimeline(burst(1, 500, T0), { eventsPerStop: 100 });
+  const timeline = buildTimeline(burst(1, 5, T0));
 
   it('finds the stop at or before a seq', () => {
-    expect(stopIndexForSeq(timeline, 100)).toBe(0);
-    expect(stopIndexForSeq(timeline, 150)).toBe(0);
-    expect(stopIndexForSeq(timeline, 200)).toBe(1);
-    expect(stopIndexForSeq(timeline, 500)).toBe(4);
+    expect(stopIndexForSeq(timeline, 1)).toBe(0);
+    expect(stopIndexForSeq(timeline, 3)).toBe(2);
+    expect(stopIndexForSeq(timeline, 5)).toBe(4);
   });
 
   it('clamps a seq before the first stop to the first stop', () => {
@@ -138,14 +154,11 @@ describe('grouping stops by day', () => {
   const day = (ts: number) => new Date(ts).toISOString().slice(0, 10);
 
   it('runs consecutive stops from one day together', () => {
-    const stops = buildTimeline(
-      [
-        ...burst(1, 5, Date.UTC(2026, 7, 8, 9)),
-        ...burst(6, 5, Date.UTC(2026, 7, 8, 20)),
-        ...burst(11, 5, Date.UTC(2026, 7, 10, 9)),
-      ],
-      { eventsPerStop: 100 },
-    ).stops;
+    const stops = buildTimeline([
+      ...transaction(1, 5, Date.UTC(2026, 7, 8, 9)),
+      ...transaction(6, 5, Date.UTC(2026, 7, 8, 20)),
+      ...transaction(11, 5, Date.UTC(2026, 7, 10, 9)),
+    ]).stops;
 
     const groups = groupByDay(stops, day);
     expect(groups.map((g) => g.day)).toEqual(['2026-08-08', '2026-08-10']);
