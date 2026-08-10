@@ -337,10 +337,21 @@ button:disabled {
  * the merge a Backspace at the start performs. Pinned to the block's top-right
  * so it never enters the text's flow.
  */
+/*
+ * BELOW the paragraph, in normal flow — never over it.
+ *
+ * This was absolutely positioned at the paragraph's top right, which on a phone
+ * is not a margin: it is the second half of the first line. Reported from real
+ * use on a 4,400-word Malayalam script, where it covered the words the writer
+ * had just tapped into.
+ *
+ * The row costs vertical space only while a paragraph is focused, and the
+ * height cache is unaffected — BlockEditor reports the textarea's height, not
+ * the item's.
+ */
 .block-delete {
-  position: absolute;
-  top: 0.35rem;
-  right: 0;
+  display: block;
+  margin: 0.1rem 0 0.3rem auto;
   min-height: 32px;
   padding: 0.2rem 0.55rem;
   font-size: 0.78rem;
