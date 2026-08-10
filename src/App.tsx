@@ -24,6 +24,7 @@ import {
 import { pruneSignals } from './signals/queries';
 import { SnapshotScheduler } from './features/timelapse/snapshotting';
 import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
+import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -189,6 +190,39 @@ export default function App() {
     view.current?.clearHighlight();
   }, []);
 
+  /*
+   * The corpus (ADR-0016). A batch walk of the whole log, so it is put behind a
+   * busy state and its result is reported in numbers the writer can check
+   * against their own memory of the work — "412 revisions, 180 exported" says
+   * something; "exported" does not.
+   *
+   * Never automatic and never uploaded. This writes a file to the device and
+   * does nothing else.
+   */
+  const onExportCorpus = useCallback(() => {
+    setBusy('Building the corpus…');
+    const now = Date.now();
+    exportCorpus(db, DOC_ID)
+      .then(({ jsonl, stats }) => {
+        if (stats.emitted === 0) {
+          setMessage(
+            stats.revisions === 0
+              ? 'No revisions yet — the corpus is built from paragraphs you come back to.'
+              : `${stats.revisions.toLocaleString()} revisions, all of them corrections. Nothing to export yet.`,
+          );
+          return;
+        }
+        const title = status?.doc.title ?? '';
+        downloadCorpus(corpusFilename(title, now), jsonl);
+        setMessage(
+          `Exported ${stats.emitted.toLocaleString()} of ${stats.pairs.toLocaleString()} revisions ` +
+            `across ${stats.blocks.toLocaleString()} paragraphs.`,
+        );
+      })
+      .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(null));
+  }, [status?.doc.title]);
+
   const onBackup = useCallback(() => {
     setBusy('Backing up…');
     runBackup(db)
@@ -239,6 +273,9 @@ export default function App() {
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
         </button>
+        <button onClick={onExportCorpus} disabled={busy !== null} data-testid="corpus-export">
+          Export corpus
+        </button>
         <button onClick={onBackup} disabled={busy !== null}>
           Back up
         </button>
@@ -259,8 +296,16 @@ export default function App() {
         />
       </div>
 
-      {busy !== null && <p className="note" style={{ padding: '0 1rem' }}>{busy}</p>}
-      {message !== null && <p className="note" style={{ padding: '0 1rem' }}>{message}</p>}
+      {busy !== null && (
+        <p className="note" style={{ padding: '0 1rem' }} data-testid="busy">
+          {busy}
+        </p>
+      )}
+      {message !== null && (
+        <p className="note" style={{ padding: '0 1rem' }} data-testid="message" aria-live="polite">
+          {message}
+        </p>
+      )}
 
       {showStatus && status !== null && (
         <div style={{ padding: '0 1rem' }}>
