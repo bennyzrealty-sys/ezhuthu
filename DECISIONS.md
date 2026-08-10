@@ -1167,3 +1167,63 @@ and the corpus and backup files are Malayalam throughout.
   there is one document; worth revisiting when there are several.
 - The rule lives in one function, `fileNameStem` in `src/ui/download.ts`, with the measurement in
   its comment so the next reader does not widen the keep-set back.
+
+---
+
+## ADR-0032 — Judge a revision by the word that changed, not by the paragraph
+
+**Status:** accepted · corrects the threshold in ADR-0012, not its intent
+
+**Context.** ADR-0012 drops a pair when it "has a normalised edit distance below threshold with no
+word-boundary change". Implemented literally, that is: change ÷ paragraph length below 5%, and the
+same number of words on both sides.
+
+Phase 7 ran it against a real manuscript for the first time — 116 prose paragraphs of a
+4,400-word Malayalam narration script. It dropped **every word swap in the document, 27 of 27**,
+which is the single thing ADR-0016 exists to collect.
+
+The measurements say the rule could not have worked. A paragraph in that script averages 145
+grapheme clusters.
+
+| Change | Clusters | Of the paragraph | Words |
+|---|---|---|---|
+| `അയാൾ` → `അയാള` (typo) | 1 | 0.7% | unchanged |
+| `കപ്പൽ` → `നൗക` (word choice) | 3 | 2.1% | unchanged |
+
+No proportional cutoff separates 0.7% from 2.1%. What such a cutoff *does* separate is short
+paragraphs from long ones — so the identical decision by the identical writer survived in a
+sentence and vanished in a page, which is not a distinction anyone wants a corpus to encode.
+
+**Decision.** The sub-threshold rule is replaced. A pair is a correction when the two sides have
+the same number of words **and every word that differs is at most `TRIVIAL_MAX_WORD_CLUSTERS`
+(1) from the word it replaced**. Nothing is measured against the paragraph.
+
+This is what "typo corrections are not style" meant in ADR-0012; only the mechanism changes. The
+other three rules — unchanged, single-cluster, punctuation — are untouched, and all of them were
+correct against the real text on the first run.
+
+**Alternatives considered.**
+
+- *Lower the ratio.* Moves the boundary, does not create one: a typo and a word choice stay 3×
+  apart at every paragraph length, and 3× is not enough when the absolute figures are 0.7% and
+  2.1%.
+- *Raise the absolute cluster threshold instead.* `TRIVIAL_MAX_CLUSTERS = 3` would drop word
+  choices in short paragraphs, which is the same failure with a different constant.
+- *Require exactly one word to differ.* Would keep a burst-coalesced revision that fixed two
+  typos in one sitting. Every differing word being a misspelling is the same idea without the
+  arbitrary count.
+- *Drop the rule and keep everything.* The single-cluster rule already catches most typos, and
+  this one catches the rest — two letters fixed in one word, a vowel sign and its neighbour. Worth
+  keeping, now that it means something.
+
+**Consequences.**
+
+- Word choices survive at every paragraph length, which is the point.
+- A one-cluster change is still dropped even when it is semantically enormous (`അവൻ` → `അവൾ`).
+  That was already ADR-0012's accepted cost and is unchanged.
+- The paragraph-level distance now only ever answers "at most one cluster", so its cutoff falls
+  from 64 to 2 and the ratio is never computed. The filter got cheaper as well as correcter.
+- `TrivialReason` gains `correction` and loses `sub-threshold`. The reason names are part of what
+  the export reports, and the old name described a mechanism that no longer exists.
+- The thresholds have now been run against real Malayalam prose. They had never been, and
+  `HANDOFF.md` said so; that entry is what prompted the run.

@@ -132,10 +132,11 @@ snapshot trap below.
 - **The time-lapse panel cannot restore a past state**, deliberately (ADR-0029). It reads.
 - **The scrub shows no diff.** Which paragraphs changed between two stops is the obvious next
   question and would cost a second materialisation; nothing is stubbed for it.
-- **The corpus thresholds have never been run against a real manuscript.** `TRIVIAL_MAX_RATIO` is
-  the weakest: it is proportional, so the same one-word swap survives in a sentence and is dropped
-  inside a page. They are all in one module and re-runnable over full history, which is the whole
-  point of filtering at export (ADR-0012).
+- **The corpus thresholds have now been run against one real manuscript** — 116 prose paragraphs
+  of a 4,400-word Malayalam narration script — and one of them was wrong: the proportional rule
+  dropped every word swap in the document. Replaced (ADR-0032). What remains untested is
+  `COALESCE_WINDOW_MS`, which needs a real writing session rather than a real document, and the
+  behaviour of `single-cluster` on a writer who makes many one-letter *choices*.
 - **The corpus is built in memory and handed over as one string.** Bounded by revisions, not by
   document size, and 77 ms over the corpus — but a manuscript with a hundred thousand revisions
   would want a stream.
@@ -320,8 +321,8 @@ through `setImmediate`. Fake `setTimeout`/`clearTimeout` only.
 
 ## Decisions already made — do not relitigate
 
-All 28 on this branch are in `DECISIONS.md` — 0026-0028 belong to the open Phase 5 and Phase 6
-branches and are not here. The seventeen that departed from the original brief:
+All 29 on this branch are in `DECISIONS.md` — 0026-0028 belong to the open Phase 5 and Phase 6
+branches and are not here. The eighteen that departed from the original brief:
 
 | ADR | Departure |
 |---|---|
@@ -343,6 +344,7 @@ branches and are not here. The seventeen that departed from the original brief:
 | 0029 | The scrub's Worker keeps the state; only windows cross, and drags are coalesced |
 | 0030 | A revision is a change to prose that already existed — deletions and composition are not |
 | 0031 | File names handed to the browser are ASCII; the timestamp identifies the file |
+| 0032 | A revision is judged by the word that changed, never by the paragraph around it |
 
 ## Corrections made so far
 
@@ -421,6 +423,14 @@ exactly what a stripped-mark title does. Widening the keep-set fixed that and le
 place: the browser discards a non-ASCII `download` value entirely and saves the file as
 `download`. ADR-0031 settles it at the right layer. Two lessons, both cheap: assert the whole
 value, and check what the platform does with the string rather than what the string looks like.
+
+**Phase 7 — the corpus filter threw away every word swap.** ADR-0012's "edit distance below
+threshold with no word-boundary change" was implemented as a fraction of the paragraph, and the
+first run against a real manuscript dropped 27 word swaps out of 27. A typo is 0.7% of a real
+paragraph and a word choice is 2.1%; no proportional cutoff separates those, and one that tries
+separates short paragraphs from long ones instead. Judged at the word — 1 cluster against 3 — the
+question answers itself. ADR-0032, and the reason to be glad the log is never compacted: the
+thresholds were re-run over full history and nothing had been lost.
 
 **Phase 7 — the first timeline counted events.** Stops were placed every hundred events and at
 session ends, which gave a three-paragraph document exactly one position and a real import a
