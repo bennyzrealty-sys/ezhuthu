@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EzhuthuDB } from '@/db/schema';
 import { createDoc, insertBlock } from '@/core/events';
 import { SNAPSHOT_INTERVAL } from '@/core/snapshots';
-import { SnapshotScheduler } from '@/features/timelapse/snapshotting';
+import { QUIET_AFTER_COMMIT_MS, SnapshotScheduler } from '@/features/timelapse/snapshotting';
 
 const DOC = 'doc-anchors';
 const T0 = 1_700_000_000_000;
@@ -19,16 +19,39 @@ afterEach(async () => {
   await db.delete();
 });
 
-/** Collects the idle work instead of running it, so a test can time it. */
-function manualIdle() {
-  const queue: Array<() => void> = [];
+/**
+ * Drives both gates by hand: the quiet period the writer has to leave, and the
+ * idle slot the work then takes. Injected rather than faked with timers,
+ * because vi.useFakeTimers() with its default toFake deadlocks anything that
+ * waits on a Dexie write (see HANDOFF).
+ */
+function manualClock() {
+  let waiting: { ms: number; work: () => void } | null = null;
+  const idleQueue: Array<() => void> = [];
+
   return {
-    schedule: (work: () => void) => queue.push(work),
-    get depth() {
-      return queue.length;
+    delay: (ms: number, work: () => void) => {
+      waiting = { ms, work };
+      return () => {
+        waiting = null;
+      };
+    },
+    schedule: (work: () => void) => idleQueue.push(work),
+    /** How long the pending attempt is waiting for, or null if none is. */
+    get waitingMs(): number | null {
+      return waiting?.ms ?? null;
+    },
+    get idleDepth(): number {
+      return idleQueue.length;
+    },
+    /** The writer stops typing for long enough. */
+    quiet(): void {
+      const pending = waiting;
+      waiting = null;
+      pending?.work();
     },
     async flush(): Promise<void> {
-      const pending = queue.splice(0);
+      const pending = idleQueue.splice(0);
       for (const work of pending) work();
       // The work itself is async; let its transaction settle.
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -37,34 +60,56 @@ function manualIdle() {
 }
 
 describe('scheduling anchors', () => {
-  it('asks once however many commits arrive', async () => {
-    const idle = manualIdle();
-    const scheduler = new SnapshotScheduler(db, DOC, { schedule: idle.schedule, now: () => T0 });
+  const scheduler = (docId = DOC) => {
+    const clock = manualClock();
+    return {
+      clock,
+      it: new SnapshotScheduler(db, docId, {
+        schedule: clock.schedule,
+        delay: clock.delay,
+        now: () => T0,
+      }),
+    };
+  };
 
-    // A paragraph being typed commits repeatedly. Each commit asks; only one
-    // piece of work should be queued.
-    for (let i = 0; i < 20; i += 1) scheduler.request();
-    expect(idle.depth).toBe(1);
+  it('attempts nothing while the writer is still typing', async () => {
+    const { clock, it: anchors } = scheduler();
 
-    await idle.flush();
-    scheduler.request();
-    expect(idle.depth).toBe(1);
+    /*
+     * The gap between two keystrokes IS idle, so idle alone is not a quiet
+     * period. This is what the perf suite measured: without the debounce the
+     * keystroke handler went from 0.95 ms median to 1.13-1.21 ms on the same
+     * machine, because a commit mid-burst found a snapshot due and
+     * requestIdleCallback handed it the space before the next keystroke.
+     */
+    for (let i = 0; i < 20; i += 1) anchors.request();
+
+    expect(clock.waitingMs).toBe(QUIET_AFTER_COMMIT_MS);
+    expect(clock.idleDepth).toBe(0);
+  });
+
+  it('asks for one piece of idle work once the writer stops', async () => {
+    const { clock, it: anchors } = scheduler();
+
+    for (let i = 0; i < 20; i += 1) anchors.request();
+    clock.quiet();
+
+    expect(clock.idleDepth).toBe(1);
   });
 
   it('writes nothing until the interval has passed', async () => {
-    const idle = manualIdle();
-    const scheduler = new SnapshotScheduler(db, DOC, { schedule: idle.schedule, now: () => T0 });
+    const { clock, it: anchors } = scheduler();
 
     await insertBlock(db, DOC, 'ഒന്നാം ഖണ്ഡിക.', undefined, { now: T0 });
-    scheduler.request();
-    await idle.flush();
+    anchors.request();
+    clock.quiet();
+    await clock.flush();
 
     expect(await db.snapshots.count()).toBe(0);
   });
 
   it('writes an anchor once the log has moved far enough', async () => {
-    const idle = manualIdle();
-    const scheduler = new SnapshotScheduler(db, DOC, { schedule: idle.schedule, now: () => T0 });
+    const { clock, it: anchors } = scheduler();
 
     // Straight into the log: this test is about the scheduler, and appending
     // five hundred blocks one transaction at a time is a minute of nothing.
@@ -82,8 +127,9 @@ describe('scheduling anchors', () => {
       })),
     );
 
-    scheduler.request();
-    await idle.flush();
+    anchors.request();
+    clock.quiet();
+    await clock.flush();
 
     /*
      * Waited for, not read once. The idle callback starts the write and does
@@ -100,28 +146,24 @@ describe('scheduling anchors', () => {
   });
 
   it('runs nothing after it has been stopped', async () => {
-    const idle = manualIdle();
-    const scheduler = new SnapshotScheduler(db, DOC, { schedule: idle.schedule, now: () => T0 });
+    const { clock, it: anchors } = scheduler();
 
-    scheduler.request();
-    scheduler.stop();
-    await idle.flush();
-    scheduler.request();
+    anchors.request();
+    anchors.stop();
+    clock.quiet();
+    await clock.flush();
+    anchors.request();
 
-    expect(idle.depth).toBe(0);
+    expect(clock.waitingMs).toBeNull();
+    expect(clock.idleDepth).toBe(0);
     expect(await db.snapshots.count()).toBe(0);
   });
 
   it('swallows a failure rather than surfacing it to the writer', async () => {
-    const idle = manualIdle();
-    // No such document: maybeWriteSnapshot will throw inside the idle callback,
-    // where nothing is waiting to catch it.
-    const scheduler = new SnapshotScheduler(db, 'no-such-doc', {
-      schedule: idle.schedule,
-      now: () => T0,
-    });
+    const { clock, it: anchors } = scheduler('no-such-doc');
 
-    scheduler.request();
-    await expect(idle.flush()).resolves.toBeUndefined();
+    anchors.request();
+    clock.quiet();
+    await expect(clock.flush()).resolves.toBeUndefined();
   });
 });

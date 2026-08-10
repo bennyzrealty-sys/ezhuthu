@@ -36,21 +36,47 @@ export const idle: IdleSchedule = (work) => {
   else setTimeout(work, 2_000);
 };
 
+/**
+ * How long after the last commit a snapshot may be attempted.
+ *
+ * MEASURED, not guessed. Without it the perf suite's keystroke handler went
+ * from 0.95 ms median to 1.13–1.21 ms on the same machine, and the cause is
+ * plain once seen: the editor commits on a 400 ms cadence while typing, the
+ * first commit on a document whose log is already past SNAPSHOT_INTERVAL finds
+ * a snapshot due, and `requestIdleCallback` hands it a gap between two
+ * keystrokes to materialise 1,563 blocks in. Idle during a typing burst is not
+ * idle — it is the space the next keystroke is about to need.
+ */
+export const QUIET_AFTER_COMMIT_MS = 5_000;
+
+/** Runs work after a delay; returns a cancel. `setTimeout` with a seam. */
+export type Delay = (ms: number, work: () => void) => () => void;
+
+export const timeout: Delay = (ms, work) => {
+  const id = setTimeout(work, ms);
+  return () => clearTimeout(id);
+};
+
 export interface SnapshotSchedulerOptions {
   schedule?: IdleSchedule;
+  delay?: Delay;
   now?: () => number;
 }
 
 /**
- * Asks for a snapshot after a commit, at most one at a time.
+ * Asks for a snapshot once the writer has stopped, and never more than one at a
+ * time.
  *
- * Coalescing matters more than it looks: `request()` is called after every
- * committed keystroke burst, and `maybeWriteSnapshot` reads the log head and
- * the snapshot ladder before deciding it has nothing to do. Left uncoalesced,
- * a paragraph being typed queues one of those per commit.
+ * Two gates, and the order matters. The debounce decides WHETHER the writer has
+ * finished; idle decides WHEN inside that quiet period to do the work. Idle
+ * alone is not enough, because the gaps between keystrokes are idle.
+ *
+ * Debouncing also coalesces, which is worth having on its own: `request()` runs
+ * after every committed burst, and `maybeWriteSnapshot` reads the log head and
+ * the snapshot ladder before concluding it has nothing to do.
  */
 export class SnapshotScheduler {
-  private pending = false;
+  private cancel: (() => void) | null = null;
   private stopped = false;
 
   constructor(
@@ -60,19 +86,25 @@ export class SnapshotScheduler {
   ) {}
 
   request(): void {
-    if (this.pending || this.stopped) return;
-    this.pending = true;
-    (this.options.schedule ?? idle)(() => {
-      void this.run();
+    if (this.stopped) return;
+    // Each commit pushes the attempt further out, so a paragraph being typed
+    // makes no attempt at all until it is finished.
+    this.cancel?.();
+    this.cancel = (this.options.delay ?? timeout)(QUIET_AFTER_COMMIT_MS, () => {
+      this.cancel = null;
+      (this.options.schedule ?? idle)(() => {
+        void this.run();
+      });
     });
   }
 
   stop(): void {
     this.stopped = true;
+    this.cancel?.();
+    this.cancel = null;
   }
 
   private async run(): Promise<void> {
-    this.pending = false;
     if (this.stopped) return;
     try {
       await maybeWriteSnapshot(this.db, this.docId, this.options.now?.() ?? Date.now());
