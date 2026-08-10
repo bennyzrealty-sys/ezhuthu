@@ -18,6 +18,7 @@
 import { rebuildProjection, type EzhuthuDB } from './schema';
 import type { BackupFile, BlockEvent, Doc } from './types';
 import { compareEvents } from '../core/order';
+import { downloadText, fileNameStem } from '../ui/download';
 
 const BACKUP_DIR_HANDLE_KEY = 'backup.directoryHandle';
 
@@ -142,15 +143,17 @@ export async function buildBackup(db: EzhuthuDB, now = Date.now()): Promise<Back
   return { format: 'ezhuthu-backup', version: 1, exportedAt: now, docs, events };
 }
 
+/**
+ * The stamp is what identifies a backup; the title is included only when it
+ * survives `fileNameStem`, which is ASCII-only for the reason set out there.
+ * A Malayalam title therefore names the file `ezhuthu-<stamp>.json` rather than
+ * `download`.
+ */
 export function backupFilename(docs: readonly Doc[], now: number): string {
   const stamp = new Date(now).toISOString().slice(0, 19).replaceAll(':', '-');
-  const title = docs.length === 1 ? (docs[0]!.title || 'untitled') : 'all-documents';
-  // \p{M} is not decoration. A Malayalam vowel sign is a combining mark, so a
-  // keep-set of letters and digits alone strips the marks out of every word and
-  // writes the backup of എന്റെ നോവൽ to a file called എന-റ-ന-വൽ. Marks belong to
-  // the cluster of their base by definition (Rule 1) and travel with it.
-  const safe = title.replaceAll(/[^\p{L}\p{M}\p{N}._-]+/gu, '-').slice(0, 60);
-  return `ezhuthu-${safe}-${stamp}.json`;
+  const title = docs.length === 1 ? docs[0]!.title : 'all-documents';
+  const stem = fileNameStem(title);
+  return stem === '' ? `ezhuthu-${stamp}.json` : `ezhuthu-${stem}-${stamp}.json`;
 }
 
 /**
@@ -232,21 +235,12 @@ export async function runBackup(
     await writable.close();
     destination = 'directory';
   } else {
-    downloadJson(filename, json);
+    downloadText(filename, json, 'application/json');
   }
 
   await db.docs.toCollection().modify({ lastBackupAt: now });
 
   return { destination, filename, bytes: json.length, eventCount: backup.events.length };
-}
-
-function downloadJson(filename: string, json: string): void {
-  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------

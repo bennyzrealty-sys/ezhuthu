@@ -191,13 +191,18 @@ describe('corpus files', () => {
     expect(toJsonl([])).toBe('');
   });
 
-  it('names the file after the document and the moment', () => {
-    const name = corpusFilename('എഴുത്ത്', Date.UTC(2026, 7, 10, 9, 30, 0));
-    expect(name).toBe('ezhuthu-corpus-എഴുത്ത്-2026-08-10T09-30-00.jsonl');
+  it('names the file after the moment, and the title where it survives', () => {
+    // ASCII only, and for a measured reason — see fileNameStem in ui/download.
+    expect(corpusFilename('എഴുത്ത്', Date.UTC(2026, 7, 10, 9, 30, 0))).toBe(
+      'ezhuthu-corpus-2026-08-10T09-30-00.jsonl',
+    );
+    expect(corpusFilename('My Novel', Date.UTC(2026, 7, 10, 9, 30, 0))).toBe(
+      'ezhuthu-corpus-My-Novel-2026-08-10T09-30-00.jsonl',
+    );
   });
 
   it('survives a title made entirely of characters a filesystem dislikes', () => {
-    expect(corpusFilename('///', 0)).toBe('ezhuthu-corpus-untitled-1970-01-01T00-00-00.jsonl');
-    expect(corpusFilename('', 0)).toBe('ezhuthu-corpus-untitled-1970-01-01T00-00-00.jsonl');
+    expect(corpusFilename('///', 0)).toBe('ezhuthu-corpus-1970-01-01T00-00-00.jsonl');
+    expect(corpusFilename('', 0)).toBe('ezhuthu-corpus-1970-01-01T00-00-00.jsonl');
   });
 });

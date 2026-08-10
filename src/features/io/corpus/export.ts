@@ -28,6 +28,7 @@
 import Dexie from 'dexie';
 import type { EzhuthuDB } from '../../../db/schema';
 import type { BlockEvent, BlockId, DocId } from '../../../db/types';
+import { downloadText, fileNameStem } from '../../../ui/download';
 import type { EditPair, OrderedEditPair } from './pairs';
 import { coalesceRevisions, revisionsForBlock } from './pairs';
 import { emptyTally, filterTrivial, type TrivialTally } from './triviality';
@@ -141,27 +142,17 @@ export async function exportCorpus(
   return { jsonl: toJsonl(kept), stats };
 }
 
+/** As with backups: the stamp identifies it, the title joins in if it can. */
 export function corpusFilename(title: string, now: number): string {
   const stamp = new Date(now).toISOString().slice(0, 19).replaceAll(':', '-');
-  // \p{M} is in the keep set deliberately: a Malayalam vowel sign is a
-  // combining mark, and dropping it turns എഴുത്ത് into എഴ-ത-ത- in the file name.
-  const safe = title
-    .replaceAll(/[^\p{L}\p{M}\p{N}._-]+/gu, '-')
-    .replaceAll(/^-+|-+$/g, '')
-    .slice(0, 60);
-  return `ezhuthu-corpus-${safe || 'untitled'}-${stamp}.jsonl`;
+  const stem = fileNameStem(title);
+  return stem === '' ? `ezhuthu-corpus-${stamp}.jsonl` : `ezhuthu-corpus-${stem}-${stamp}.jsonl`;
 }
 
 /**
- * Hand the file to the browser. The only thing in this module that touches the
- * DOM, and the only thing the corpus ever does with the network, which is
- * nothing.
+ * Hand the file to the browser — the only thing the corpus does with it, and
+ * the only thing it does at all beyond reading the log.
  */
 export function downloadCorpus(filename: string, jsonl: string): void {
-  const url = URL.createObjectURL(new Blob([jsonl], { type: 'application/x-ndjson' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadText(filename, jsonl, 'application/x-ndjson');
 }
