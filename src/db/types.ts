@@ -63,6 +63,14 @@ export interface BlockEventPayload {
   prevText?: string;
   /** insert, move. Intent, not outcome: `null` means "first in document". */
   afterBlockId?: BlockId | null;
+  /**
+   * On a `delete` that implements a MERGE, the block the text was folded into
+   * (ADR-0028). A merge is not a deletion: its text survives in the neighbour,
+   * so it must not leave a restorable ghost, which would duplicate that text.
+   * The fold records it on `Block.meta.mergedInto`; ghost markers skip it.
+   * Absent on a deliberate delete, which is what leaves a ghost.
+   */
+  mergedInto?: BlockId;
 }
 
 export interface BlockEvent {

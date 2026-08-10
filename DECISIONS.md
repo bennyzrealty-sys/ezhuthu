@@ -1055,3 +1055,96 @@ Comparison is lexicographic on `order`, like every other comparison of that fiel
   "deepest" when he means "where I stopped". Noted as a revisit trigger: the alternative is the
   **latest** dwelled block by timestamp rather than the deepest by order, and the data to switch
   is already in the store.
+
+---
+
+## ADR-0027 — The margin bar marks revision, not arrival
+
+**Status:** accepted · refines ADR-0005 and ADR-0006 for the case they did not name
+
+**Context.** ADR-0005 puts a margin bar on each block with opacity for recency and saturation for
+revision count, and ADR-0006 computes the opacity purely from `updatedAt`. Neither says what
+happens the moment after an import. Import (ADR-0014, ADR-0003) writes every block with
+`updatedAt` set to the import time, so a bar keyed on `updatedAt` alone lights the **entire
+document** at full opacity the instant it is brought in, then fades it uniformly over a week.
+
+That is not what requirement 2 asks for. "Make edited lines identifiable at a glance" is a
+question about where the *writer worked*, and an import is not the writer working — it is the same
+distinction the "last edited" resume destination already draws, and draws with the same data. A
+document that is uniformly lit conveys exactly as much as one that is uniformly dark.
+
+**Decision.** The margin bar is drawn only for blocks with `revisionCount > 0`. Opacity still
+comes from `updatedAt` decayed in ADR-0006's bands; saturation still comes from `revisionCount`.
+A never-revised block — every block just after an import, and the tail half of a paragraph split
+in the middle — carries no bar. `markIntensity` returns `null` for it, so the minimap scores it
+zero and the row draws nothing, with no caller having to re-decide the question.
+
+This is the same filter, for the same reason, as `lastEdited` in the resume strip
+(`src/features/resume/destinations.ts`): `revisionCount > 0` is what separates two thousand blocks
+that arrived together from the handful the writer has actually changed.
+
+**Alternatives considered.**
+
+- *Key the bar on `updatedAt` alone, as ADR-0006 literally reads.* Lights the whole document
+  after import; the feature conveys nothing until a week has passed.
+- *Suppress the bar for a grace period after an import.* A time-based special-case with a
+  threshold to guess, papering over the real distinction, which is revision not recency.
+- *Record an "imported" flag per block and exclude it.* New stored state for something already
+  answered by a field the fold maintains.
+
+**Consequences.**
+
+- After an import the document is a clean slate; bars appear only as the writer revises.
+- A brand-new paragraph typed by the writer is marked as soon as its first commit lands, because
+  that commit is an `update` (ADR-0004's idle commit), which increments `revisionCount`.
+- The tail of a mid-paragraph split is a fresh block at `revisionCount 0` and so is briefly
+  unmarked until edited. Defensible: that text is existing prose relocated, not new writing.
+- The minimap inherits the rule for free, because it shades from the same `markIntensity`.
+
+---
+
+## ADR-0028 — A merge is not a deletion, and leaves no ghost
+
+**Status:** accepted · refines ADR-0018 for the merge case it did not name
+
+**Context.** ADR-0018 makes a `delete` a soft delete and marks the join with a ghost seam that
+reveals and restores the removed text. But the editor's merge — Backspace at the start of a block —
+is *implemented* as a soft delete too: the block's text is appended to its neighbour, and the now-
+empty block is deleted (`DocumentView.mergeBack`). The event type is identical, so a ghost marker
+built naively renders a seam after every merge.
+
+That seam is wrong twice over. The text it offers to reveal is not gone — it is sitting in the
+neighbour it merged into, so the reveal shows the reader something already on screen. And restoring
+it re-inserts the block as a separate paragraph while the merged copy stays in the neighbour, so a
+"restore" **duplicates** the text. A merge is a join the writer performed deliberately; treating it
+as a recoverable deletion misrepresents what happened.
+
+**Decision.** The `delete` event carries `mergedInto` when it is the second half of a merge, naming
+the block the text was folded into. The fold records it on `Block.meta.mergedInto`
+(`meta` is the extension point ADR-0003 kept for exactly this). Ghost-marker seam computation
+(`computeSeams`) skips blocks with `mergedInto` set: a merge shows no seam. A deliberate delete
+omits it, and that is what leaves a ghost.
+
+Deliberate deletion needs an affordance, since until now the only path to a soft delete was the
+merge. A **Delete** control appears on the focused block; it deletes with no `mergedInto`, so the
+text is genuinely gone from the document and the seam is how it is found again.
+
+**Alternatives considered.**
+
+- *Show a ghost for merges too.* Restoring one duplicates text; revealing one shows text already
+  visible. Both are confusing in the way ADR-0017 warns about — a feature that is confidently wrong.
+- *Make restore "unmerge": strip the merged suffix from the neighbour and re-split.* The neighbour
+  may have been edited since, so the suffix is no longer identifiable. Fragile, and it turns a
+  recovery into a guess.
+- *A separate event type for merge.* A fifth event type (ADR-0001 resists new ones) for what is a
+  delete with one extra fact. A payload field records that fact without a new fold branch.
+
+**Consequences.**
+
+- Ghost markers mark only genuine losses, which is the only case where recovery is meaningful.
+- `meta.mergedInto` records where a merge's text went, which is also what a future "unmerge" would
+  need — recorded now at no cost, built when there is a reason to.
+- The fold gains one deterministic line; the equivalence property test is unaffected, since the
+  random sequence generator never sets `mergedInto` and both fold paths set the same meta when it is.
+- A deliberate-delete affordance now exists, which the editor lacked; it is the entry point every
+  ghost in the document comes from.

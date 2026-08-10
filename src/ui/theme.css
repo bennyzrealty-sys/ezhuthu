@@ -109,6 +109,20 @@ dl {
   margin: 0;
 }
 
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0;
+  cursor: pointer;
+}
+
+.toggle-row input {
+  min-width: 20px;
+  min-height: 20px;
+}
+
 .state-ok {
   color: var(--ok);
 }
@@ -185,14 +199,49 @@ button:disabled {
    Document
    --------------------------------------------------------------------------- */
 
-.doc-scroll {
+/*
+ * The scroller and the minimap share this box. Relative so the minimap can pin
+ * itself to the right edge; a flex row so the scroller takes the width the
+ * minimap does not.
+ */
+.doc-viewport {
+  position: relative;
+  display: flex;
   height: 100dvh;
+}
+
+.doc-scroll {
+  flex: 1;
+  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   /* Keeps the virtualiser's absolutely-positioned children in its own layer
      rather than promoting the whole document. */
   contain: strict;
   -webkit-overflow-scrolling: touch;
+}
+
+/*
+ * The minimap column (ADR-0021). A thin canvas pinned to the right edge. It
+ * overlays the scrollbar gutter rather than taking a flex track of its own, so
+ * on a phone it costs no reading width; the document's centred measure leaves
+ * this space empty on wider screens anyway.
+ */
+.doc-minimap {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: pointer;
+  /* A faint track so the column is discoverable and tappable where it is cold. */
+  background: color-mix(in srgb, var(--ink-muted) 12%, transparent);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.doc-minimap:hover {
+  background: color-mix(in srgb, var(--ink-muted) 20%, transparent);
 }
 
 .doc-inner {
@@ -209,6 +258,178 @@ button:disabled {
   left: 0;
   width: 100%;
   padding: 0 1rem;
+}
+
+/*
+ * Wraps just the block — margin bar plus row-or-editor — so the bar aligns with
+ * the text and not with a ghost-marker seam that may sit above it in the same
+ * item. Relative, so the bar and the delete affordance position against the
+ * block rather than the whole item.
+ */
+.doc-block {
+  position: relative;
+}
+
+/*
+ * The margin intensity bar (ADR-0005, ADR-0006, ADR-0027).
+ *
+ * Two dimensions in 4 px: opacity is recency, saturation is revision count.
+ * The colour is one hue — the accent — mixed toward a neutral grey by
+ * saturation, so the signal is opacity and saturation and never hue, which is
+ * what makes it colour-blind safe (ADR-0005).
+ *
+ * Absolutely positioned in the left gutter — `.doc-block` sits inside the item's
+ * 1rem padding, so the bar reaches back out into that gutter with a negative
+ * offset. It sits clear of the text and cannot reflow a single glyph, the same
+ * reason the search mark carries no metrics. Non-interactive: a peripheral-
+ * vision signal, not a target.
+ */
+.block-mark {
+  position: absolute;
+  left: -0.75rem;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 4px;
+  border-radius: 2px;
+  background: color-mix(
+    in srgb,
+    var(--accent) calc(var(--mark-saturation, 0) * 100%),
+    var(--ink-muted)
+  );
+  opacity: var(--mark-opacity, 0);
+  pointer-events: none;
+}
+
+/*
+ * The visual pulse (ADR-0022): a brief widen-and-glow as the writer scrolls this
+ * edit through the centre. A cross-platform companion to the haptic tick, not a
+ * claimed substitute. Honoured off under reduced-motion.
+ */
+.block-mark.is-pulsing {
+  animation: mark-pulse 320ms ease-out;
+  transform-origin: left center;
+}
+
+@keyframes mark-pulse {
+  0% {
+    transform: scaleX(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  35% {
+    transform: scaleX(2.4);
+    box-shadow: 0 0 6px 2px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    transform: scaleX(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block-mark.is-pulsing {
+    animation: none;
+  }
+}
+
+/*
+ * The deliberate-delete affordance, shown only while a block is focused. A
+ * genuine deletion — the kind that leaves a ghost (ADR-0018) — as opposed to
+ * the merge a Backspace at the start performs. Pinned to the block's top-right
+ * so it never enters the text's flow.
+ */
+.block-delete {
+  position: absolute;
+  top: 0.35rem;
+  right: 0;
+  min-height: 32px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--rule));
+  background: var(--surface);
+}
+
+/* ---------------------------------------------------------------------------
+   Ghost markers — the seam left by a deletion (ADR-0018)
+   --------------------------------------------------------------------------- */
+
+.seam {
+  padding: 0.1rem 0;
+}
+
+/*
+ * Collapsed, a 2 px rule the width of the text: quiet, but present, so a
+ * deletion is not invisible. The whole rule is the tap target.
+ */
+.seam-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink-muted);
+}
+
+.seam-rule::before {
+  content: '';
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.seam-count {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.seam.is-open .seam-rule::before {
+  background: var(--danger);
+}
+
+.seam-ghosts {
+  margin: 0.35rem 0 0.15rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.seam-ghost {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  border-left: 2px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  padding: 0.1rem 0 0.1rem 0.6rem;
+}
+
+/*
+ * The recovered text is set in the document face so it reads as the paragraph
+ * it will become again, but muted — it is not part of the document yet.
+ */
+.seam-text {
+  flex: 1;
+  margin: 0;
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.seam-restore {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
 }
 
 /*
@@ -305,8 +526,9 @@ button:disabled {
   height: 100dvh;
 }
 
-.doc-layout .doc-scroll {
+.doc-layout .doc-viewport {
   flex: 1;
+  min-height: 0;
   height: auto;
 }
 
@@ -455,6 +677,84 @@ mark,
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll-back auto-bookmarks (docs/SIGNALS.md)
+   --------------------------------------------------------------------------- */
+
+.bookmarks-panel {
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  max-height: 45dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.bookmarks-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem 0.4rem;
+}
+
+.bookmarks-head .spacer {
+  flex: 1;
+}
+
+.bookmarks-title {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+}
+
+.bookmarks-head button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.4rem 0.7rem;
+}
+
+.bookmarks-note {
+  padding: 0 1rem 0.6rem;
+}
+
+.bookmarks-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.bookmark {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: flex-start;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.55rem 1rem;
+  min-height: 44px;
+}
+
+.bookmark-excerpt {
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.bookmark-detail {
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------------------------------------------------------------------------

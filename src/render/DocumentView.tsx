@@ -25,11 +25,23 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { EzhuthuDB } from '../db/schema';
 import type { BlockIndexEntry, DocId } from '../db/types';
-import { deleteBlock, insertBlock, updateBlock } from '../core/events';
+import { deleteBlock, insertBlock, restoreBlock, updateBlock } from '../core/events';
 import { HeightCache } from './measure';
 import { caretOffsetFromPoint } from './caret';
 import { BlockRow } from './BlockRow';
 import { BlockEditor } from './BlockEditor';
+import { MarginBar } from './MarginBar';
+import { Minimap } from './Minimap';
+import { Seam } from './Seam';
+import { markIntensity } from '../features/visibility/intensity';
+import { computeSeams, type Seams } from '../features/visibility/seams';
+import {
+  DEFAULT_FEEDBACK,
+  EditedRegionPulse,
+  haptic,
+  VISUAL_PULSE_MS,
+  type FeedbackSettings,
+} from '../features/visibility/feedback';
 import { SignalCollector } from '../signals/collector';
 
 /** Blocks rendered beyond the viewport on each side. */
@@ -61,6 +73,15 @@ export interface DocumentViewProps {
   db: EzhuthuDB;
   docId: DocId;
   onChange?: () => void;
+  /**
+   * Clock for margin-bar decay (ADR-0006, CLAUDE.md rule 8). Injected rather
+   * than called inside the render so the decay is testable; real callers omit
+   * it. Read once per render, so bars fade whenever the list re-renders — which
+   * a scroll or an edit already forces — not on a timer of their own.
+   */
+  now?: () => number;
+  /** Scroll-past feedback (ADR-0022). Off by default. */
+  feedback?: FeedbackSettings;
   ref?: RefObject<DocumentViewHandle | null>;
 }
 
@@ -69,13 +90,23 @@ interface FocusTarget {
   caret: number;
 }
 
-export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
+export function DocumentView({
+  db,
+  docId,
+  onChange,
+  now,
+  feedback = DEFAULT_FEEDBACK,
+  ref,
+}: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
+  const [seams, setSeams] = useState<Seams>({ before: new Map(), trailing: [] });
   const [texts, setTexts] = useState<Map<string, string>>(new Map());
   const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [loading, setLoading] = useState(true);
   const [highlight, setHighlight] = useState<RevealTarget | null>(null);
   const [signals, setSignals] = useState<SignalCollector | null>(null);
+  /** The block whose margin bar is mid visual-pulse (ADR-0022). */
+  const [pulseId, setPulseId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const heights = useRef(new HeightCache());
@@ -105,6 +136,19 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
           length: b.text.length,
           deleted: false,
         })),
+    );
+
+    // Seams need the deleted blocks the live index drops — computed from the
+    // same ordered read so a deletion never costs a second query (ADR-0018).
+    setSeams(
+      computeSeams(
+        blocks.map((b) => ({
+          blockId: b.blockId,
+          deleted: b.deletedAt !== undefined,
+          merged: b.meta?.mergedInto !== undefined,
+          length: b.text.length,
+        })),
+      ),
     );
     setLoading(false);
   }, [db, docId]);
@@ -294,6 +338,68 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
   }, [db, docId, ready]);
 
   // -------------------------------------------------------------------------
+  // Scroll-past feedback (ADR-0022)
+  // -------------------------------------------------------------------------
+
+  /*
+   * A haptic tick and/or a visual pulse as an edited region crosses the centre.
+   * Read through refs so the passive scroll listener is installed once and never
+   * re-subscribes on an index or setting change.
+   *
+   * The centre block is found from the virtualiser's offsets — content-relative,
+   * like scrollTop — so this forces no layout on the scroll path, and the whole
+   * body is skipped when neither feedback is on. The pulse decision and the
+   * throttle live in EditedRegionPulse (ADR-0022: ≤ 1 per 300 ms).
+   */
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const clockRef = useRef<() => number>(now ?? Date.now);
+  clockRef.current = now ?? Date.now;
+  const regionPulse = useRef(new EditedRegionPulse());
+  const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element === null) return;
+
+    let lastProcessed = 0;
+    const onScroll = (): void => {
+      const settings = feedbackRef.current;
+      if (!settings.haptics && !settings.visualPulse) return;
+
+      const at = clockRef.current();
+      // Coarser than a frame: crossing a paragraph does not need 60 Hz.
+      if (at - lastProcessed < 100) return;
+      lastProcessed = at;
+
+      const centre = element.scrollTop + element.clientHeight / 2;
+      const item = virtualizer
+        .getVirtualItems()
+        .find((it) => centre >= it.start && centre < it.start + it.size);
+      const entry = item === undefined ? undefined : indexRef.current[item.index];
+      const edited =
+        entry !== undefined && markIntensity(entry, at) !== null ? entry.blockId : undefined;
+
+      if (!regionPulse.current.shouldPulse(edited, at)) return;
+
+      if (settings.haptics) haptic();
+      if (settings.visualPulse && edited !== undefined) {
+        setPulseId(edited);
+        if (pulseTimer.current !== null) clearTimeout(pulseTimer.current);
+        pulseTimer.current = setTimeout(() => setPulseId(null), VISUAL_PULSE_MS);
+      }
+    };
+
+    element.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      element.removeEventListener('scroll', onScroll);
+      if (pulseTimer.current !== null) clearTimeout(pulseTimer.current);
+    };
+  }, [virtualizer, ready]);
+
+  // -------------------------------------------------------------------------
   // Editing
   // -------------------------------------------------------------------------
 
@@ -385,7 +491,9 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
 
       const joined = previousBlock.text + text;
       await updateBlock(db, docId, previousEntry.blockId, joined);
-      await deleteBlock(db, docId, blockId);
+      // A merge, not a deletion: the text is now in the previous block, so this
+      // leaves no ghost (ADR-0028).
+      await deleteBlock(db, docId, blockId, { mergedInto: previousEntry.blockId });
 
       setTexts((prev) => {
         const next = new Map(prev);
@@ -421,9 +529,57 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
   }, []);
 
   // -------------------------------------------------------------------------
+  // Deletion and ghost markers (ADR-0018)
+  // -------------------------------------------------------------------------
+
+  /**
+   * A deliberate deletion of the focused block. This is the one that leaves a
+   * ghost — no `mergedInto`, so its text is genuinely gone from the document
+   * and the seam is how it is found again. The index and seams are recomputed
+   * from the log rather than patched, because a deletion changes which live
+   * block a seam attaches to, which is exactly what `computeSeams` decides.
+   */
+  const removeBlock = useCallback(
+    async (blockId: string) => {
+      setFocus((current) => (current?.blockId === blockId ? null : current));
+      await deleteBlock(db, docId, blockId);
+      await loadIndex();
+      onChange?.();
+    },
+    [db, docId, loadIndex, onChange],
+  );
+
+  const restoreGhost = useCallback(
+    async (blockId: string) => {
+      // No `afterBlockId`: the block kept its order key through the soft delete,
+      // so it returns to the seam it left (ADR-0018 restore-in-place).
+      await restoreBlock(db, docId, blockId);
+      await loadIndex();
+      onChange?.();
+    },
+    [db, docId, loadIndex, onChange],
+  );
+
+  const getGhostText = useCallback(
+    async (blockId: string) => (await db.blocks.get(blockId))?.text ?? '',
+    [db],
+  );
+
+  // -------------------------------------------------------------------------
 
   const total = virtualizer.getTotalSize();
   const measureRef = useMemo(() => virtualizer.measureElement, [virtualizer]);
+
+  // One clock read per render feeds every bar's decay, so the whole document
+  // ages against a single instant rather than each bar reading its own.
+  const nowMs = (now ?? Date.now)();
+
+  // Stable so the minimap — memoised on the index — does not redraw on every
+  // scroll frame. The virtualiser instance is stable across renders.
+  const jumpToIndex = useCallback(
+    (i: number) => virtualizer.scrollToIndex(i, { align: 'center' }),
+    [virtualizer],
+  );
 
   if (loading) {
     return <div className="doc-empty">തുറക്കുന്നു…</div>;
@@ -434,48 +590,85 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
   }
 
   return (
-    <div className="doc-scroll" ref={scrollRef}>
-      <div className="doc-inner" style={{ height: `${total}px` }}>
-        {items.map((item) => {
-          const entry = index[item.index];
-          if (entry === undefined) return null;
-          const text = texts.get(entry.blockId);
-          const focused = focus?.blockId === entry.blockId;
+    <div className="doc-viewport">
+      <div className="doc-scroll" ref={scrollRef}>
+        <div className="doc-inner" style={{ height: `${total}px` }}>
+          {items.map((item) => {
+            const entry = index[item.index];
+            if (entry === undefined) return null;
+            const text = texts.get(entry.blockId);
+            const focused = focus?.blockId === entry.blockId;
+            const intensity = markIntensity(entry, nowMs);
+            const seamBefore = seams.before.get(entry.blockId);
+            const isLast = item.index === index.length - 1;
 
-          return (
-            <div
-              key={entry.blockId}
-              data-index={item.index}
-              ref={measureRef}
-              className="doc-item"
-              style={{ transform: `translateY(${item.start}px)` }}
-            >
-              {focused ? (
-                <BlockEditor
-                  blockId={entry.blockId}
-                  initialText={text ?? ''}
-                  initialCaret={focus.caret}
-                  onCommit={(id, value) => void commit(id, value)}
-                  onSplit={(id, before, after) => void split(id, before, after)}
-                  onMergeBack={(id, value) => void mergeBack(id, value)}
-                  onBlur={(id, value) => void blur(id, value)}
-                  onHeight={reportHeight}
-                  typing={signals?.typing}
-                />
-              ) : (
-                <BlockRow
-                  blockId={entry.blockId}
-                  text={text ?? ''}
-                  onActivate={activate}
-                  highlight={
-                    highlight?.blockId === entry.blockId ? highlight.match : undefined
-                  }
-                />
-              )}
-            </div>
-          );
-        })}
+            return (
+              <div
+                key={entry.blockId}
+                data-index={item.index}
+                ref={measureRef}
+                className="doc-item"
+                style={{ transform: `translateY(${item.start}px)` }}
+              >
+                {seamBefore !== undefined && (
+                  <Seam ghosts={seamBefore} getText={getGhostText} onRestore={restoreGhost} />
+                )}
+                <div className="doc-block">
+                  {intensity !== null && (
+                    <MarginBar
+                      blockId={entry.blockId}
+                      intensity={intensity}
+                      pulsing={pulseId === entry.blockId}
+                    />
+                  )}
+                  {focused ? (
+                    <>
+                      <BlockEditor
+                        blockId={entry.blockId}
+                        initialText={text ?? ''}
+                        initialCaret={focus.caret}
+                        onCommit={(id, value) => void commit(id, value)}
+                        onSplit={(id, before, after) => void split(id, before, after)}
+                        onMergeBack={(id, value) => void mergeBack(id, value)}
+                        onBlur={(id, value) => void blur(id, value)}
+                        onHeight={reportHeight}
+                        typing={signals?.typing}
+                      />
+                      <button
+                        type="button"
+                        className="block-delete"
+                        data-testid="block-delete"
+                        aria-label="Delete this paragraph"
+                        // Mouse down, not click: a click would blur the editor
+                        // first, committing and clearing focus before this ran.
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          void removeBlock(entry.blockId);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  ) : (
+                    <BlockRow
+                      blockId={entry.blockId}
+                      text={text ?? ''}
+                      onActivate={activate}
+                      highlight={
+                        highlight?.blockId === entry.blockId ? highlight.match : undefined
+                      }
+                    />
+                  )}
+                </div>
+                {isLast && seams.trailing.length > 0 && (
+                  <Seam ghosts={seams.trailing} getText={getGhostText} onRestore={restoreGhost} />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
+      <Minimap blocks={index} onJump={jumpToIndex} now={now} />
     </div>
   );
 }

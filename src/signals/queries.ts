@@ -59,6 +59,38 @@ export async function totalsByBlock(
   return totals;
 }
 
+export interface BlockAggregate {
+  /** How many separate signal records the block accrued. */
+  count: number;
+  /** Their summed value. */
+  total: number;
+}
+
+/**
+ * Both the count and the sum per block for one kind of signal.
+ *
+ * Scroll-back bookmarks (Phase 6) rank by how *often* the writer returned to a
+ * block, not only how long — a reference checked ten times briefly is a
+ * stronger bookmark than one dwelled on once. Signals coalesce per flush window,
+ * so a `count` is close to "distinct visits" without being exactly it, which is
+ * the right resolution for a ranking.
+ */
+export async function aggregateByBlock(
+  db: EzhuthuDB,
+  docId: DocId,
+  kind: SignalKind,
+  options: WindowOptions = {},
+): Promise<Map<string, BlockAggregate>> {
+  const out = new Map<string, BlockAggregate>();
+  for (const row of await readWindow(db, docId, kind, options)) {
+    const agg = out.get(row.blockId) ?? { count: 0, total: 0 };
+    agg.count += 1;
+    agg.total += row.value;
+    out.set(row.blockId, agg);
+  }
+  return out;
+}
+
 export interface RankedBlock {
   blockId: string;
   value: number;
