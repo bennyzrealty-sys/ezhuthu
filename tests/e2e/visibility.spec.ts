@@ -284,3 +284,25 @@ test.describe('scroll-past feedback (ADR-0022)', () => {
     await expect(page.locator('[data-testid="feedback-visual"]')).toBeChecked();
   });
 });
+
+test('the delete control never covers the paragraph it belongs to', async ({ page }) => {
+  /*
+   * Reported from real use on a phone: the control was absolutely positioned at
+   * the paragraph's top right, which on a narrow screen is not a margin — it is
+   * the second half of the first line, and it sat on top of the words.
+   */
+  await importCorpus(page, SMALL_DOC);
+  await page.locator('.block-row').first().click();
+
+  const editor = page.locator('.block-editor');
+  const button = page.getByTestId('block-delete');
+  await expect(button).toBeVisible();
+
+  const text = await editor.boundingBox();
+  const control = await button.boundingBox();
+  expect(text).not.toBeNull();
+  expect(control).not.toBeNull();
+
+  // Below the text, not over it: the control starts where the paragraph ends.
+  expect(control!.y).toBeGreaterThanOrEqual(text!.y + text!.height - 1);
+});

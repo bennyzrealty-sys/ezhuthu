@@ -227,6 +227,24 @@ export async function openDoc(db: EzhuthuDB, input: CreateDocInput = {}): Promis
 // ---------------------------------------------------------------------------
 
 /**
+ * The two history markers, omitted when absent (ADR-0033).
+ *
+ * Spread rather than assigned so an ordinary edit's payload is byte-identical
+ * to what it was before undo existed — an `undefined` field still serialises
+ * into every record in IndexedDB, and the log is the one thing here that must
+ * not grow for features that are not using it.
+ */
+function history(opts: { groupId?: string; undoOf?: string }): {
+  groupId?: string;
+  undoOf?: string;
+} {
+  return {
+    ...(opts.groupId === undefined ? {} : { groupId: opts.groupId }),
+    ...(opts.undoOf === undefined ? {} : { undoOf: opts.undoOf }),
+  };
+}
+
+/**
  * `afterBlockId`: `null` = first in document, `undefined` = append at end,
  * a blockId = immediately after that block.
  */
@@ -235,13 +253,13 @@ export async function insertBlock(
   docId: DocId,
   text: string,
   afterBlockId?: BlockId | null,
-  opts: { blockId?: BlockId; now?: number } = {},
+  opts: { blockId?: BlockId; now?: number; groupId?: string; undoOf?: string } = {},
 ): Promise<BlockEvent> {
   return appendEvent(db, {
     docId,
     blockId: opts.blockId ?? uuid(),
     type: 'insert',
-    payload: { text, afterBlockId },
+    payload: { text, afterBlockId, ...history(opts) },
     now: opts.now,
   });
 }
@@ -256,13 +274,13 @@ export async function updateBlock(
   docId: DocId,
   blockId: BlockId,
   text: string,
-  opts: { now?: number } = {},
+  opts: { now?: number; groupId?: string; undoOf?: string } = {},
 ): Promise<BlockEvent> {
   return appendEvent(db, {
     docId,
     blockId,
     type: 'update',
-    payload: { text },
+    payload: { text, ...history(opts) },
     now: opts.now,
   });
 }
@@ -280,7 +298,7 @@ export async function deleteBlock(
   db: EzhuthuDB,
   docId: DocId,
   blockId: BlockId,
-  opts: { now?: number; mergedInto?: BlockId } = {},
+  opts: { now?: number; mergedInto?: BlockId; groupId?: string; undoOf?: string } = {},
 ): Promise<BlockEvent> {
   const block = await db.blocks.get(blockId);
   if (block === undefined) throw new Error(`delete: unknown block ${blockId}`);
@@ -288,7 +306,7 @@ export async function deleteBlock(
     docId,
     blockId,
     type: 'delete',
-    payload: { text: block.text, mergedInto: opts.mergedInto },
+    payload: { text: block.text, mergedInto: opts.mergedInto, ...history(opts) },
     now: opts.now,
   });
 }
@@ -299,13 +317,13 @@ export async function restoreBlock(
   docId: DocId,
   blockId: BlockId,
   afterBlockId?: BlockId | null,
-  opts: { now?: number } = {},
+  opts: { now?: number; groupId?: string; undoOf?: string } = {},
 ): Promise<BlockEvent> {
   return appendEvent(db, {
     docId,
     blockId,
     type: 'insert',
-    payload: { afterBlockId },
+    payload: { afterBlockId, ...history(opts) },
     now: opts.now,
   });
 }

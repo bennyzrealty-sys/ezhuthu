@@ -1367,3 +1367,71 @@ correct against the real text on the first run.
   the export reports, and the old name described a mechanism that no longer exists.
 - The thresholds have now been run against real Malayalam prose. They had never been, and
   `HANDOFF.md` said so; that entry is what prompted the run.
+
+---
+
+## ADR-0033 — Undo appends its reversal; it never rewrites the log
+
+**Status:** accepted
+
+**Context.** The app shipped without undo, which a writing application cannot be without — reported
+from the first hour of real use on a 4,400-word manuscript. The event log makes undo unusually easy
+to get right and unusually easy to get catastrophically wrong.
+
+The wrong version is obvious and tempting: the last event is the last row in a store, so delete it.
+That breaks everything downstream. Replay would no longer reproduce what happened, the scrub would
+show a history that never occurred (ADR-0009), the corpus would lose the revision *and* the fact
+that it was withdrawn (ADR-0016), and any backup already holding the event would restore work the
+writer had taken back (ADR-0013). The log is the asset (ADR-0001); it is append-only or it is not a
+log.
+
+**Decision.** An undo **appends a compensating event** through the same `appendEvent` path as any
+edit — one transaction, one watermark (ADR-0008).
+
+| Undone | Appended |
+|---|---|
+| `insert` | `delete` carrying the text, so a ghost marker can still reach it (ADR-0018) |
+| `update` | `update` back to the text the block held before, derived from the log |
+| `delete` | `insert` with no `afterBlockId` — restore in place |
+| `move` | nothing; refused |
+
+Three rules make repeated pressing behave:
+
+**The compensating event carries `undoOf`.** Without it the next press would reverse the reversal,
+which is a redo nobody asked for. With it, the stack skips both undo events and the events they
+have already undone.
+
+**An action's events carry a shared `groupId`.** A split is an update plus an insert and a merge is
+an update plus a delete. The writer pressed one key; one press takes it back.
+
+**The stack is the current session.** Undo reaches back through this launch of the app and stops.
+Further back is not undo, it is time travel — and the scrub already does that, with the crucial
+difference that it cannot silently overwrite a paragraph the writer has since spent an hour on.
+
+**Refusing is a valid outcome.** An `update` whose earlier text is not in the log — history
+beginning at an import boundary (ADR-0012) — is not undone at all, rather than undone to empty.
+Writing a blank paragraph over someone's work is worse than a button that says it cannot help.
+
+**Alternatives considered.**
+
+- *Delete the last event.* The tempting one. Covered above: it breaks replay, the scrub, the
+  corpus and restore, all silently and all later.
+- *An in-memory undo stack in the component.* What most editors do, and wrong here: it is a second
+  source of truth about what happened, it disagrees with the log the moment a second tab writes,
+  and it cannot survive the reload the log already survives.
+- *Undo across sessions.* Attractive until a writer opens a manuscript after a week and presses
+  undo, and a paragraph they do not remember writing changes under them.
+- *Redo.* Deliberately not built. It falls out of this design almost for free — an undo event is
+  itself reversible — but "almost" is where the bugs are, and nobody has asked for it.
+
+**Consequences.**
+
+- History records both the change and its withdrawal, which is more truthful than either alone and
+  is what the scrub will show.
+- The corpus sees an undone edit as a pair that returns to where it started, and drops it as
+  `unchanged` — which is correct: the writer changed their mind, they did not revise.
+- The log grows by one event per undo. Bounded by how much anyone presses a button.
+- `core/history.ts` now holds the "what was the text here" rule that undo and the corpus exporter
+  both need. Two definitions of that would eventually disagree, and the one that disagreed would
+  publish a paragraph that never existed.
+- Finding what to undo reads a bounded tail of the log (`UNDO_WINDOW_EVENTS`), not the whole thing.

@@ -26,6 +26,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import type { EzhuthuDB } from '../db/schema';
 import type { BlockIndexEntry, DocId } from '../db/types';
 import { deleteBlock, insertBlock, restoreBlock, updateBlock } from '../core/events';
+import { uuid } from '../db/ids';
 import { HeightCache } from './measure';
 import { caretOffsetFromPoint } from './caret';
 import { BlockRow } from './BlockRow';
@@ -67,6 +68,17 @@ export interface DocumentViewHandle {
    */
   reveal: (target: RevealTarget) => void;
   clearHighlight: () => void;
+  /**
+   * Re-read the document from the store.
+   *
+   * For changes this view did not make — undo is the one that exists (ADR-0033).
+   * The index and the text window are this component's state, so a change
+   * appended from the toolbar is invisible here until they are re-read. Cheaper
+   * and far less disruptive than remounting, which is what import does: this
+   * keeps the scroll position, and the reader is looking at the paragraph that
+   * just changed back.
+   */
+  reload: () => void;
 }
 
 export interface DocumentViewProps {
@@ -275,8 +287,16 @@ export function DocumentView({
       clearHighlight() {
         setHighlight(null);
       },
+      reload() {
+        // Drop the cached text as well as the index: undo changes the words in
+        // a block the window is already holding, and a stale entry there would
+        // show the reader the text they just took back.
+        setTexts(new Map());
+        setFocus(null);
+        void loadIndex();
+      },
     }),
-    [index, virtualizer],
+    [index, virtualizer, loadIndex],
   );
 
   // -------------------------------------------------------------------------
@@ -444,8 +464,11 @@ export function DocumentView({
 
   const split = useCallback(
     async (blockId: string, before: string, after: string) => {
-      await updateBlock(db, docId, blockId, before);
-      const event = await insertBlock(db, docId, after, blockId);
+      // One action, two events: a shared id is what lets undo take the split
+      // back in a single press rather than two (ADR-0033).
+      const groupId = uuid();
+      await updateBlock(db, docId, blockId, before, { groupId });
+      const event = await insertBlock(db, docId, after, blockId, { groupId });
 
       setTexts((previous) => {
         const next = new Map(previous);
@@ -490,10 +513,11 @@ export function DocumentView({
       if (previousBlock === undefined) return;
 
       const joined = previousBlock.text + text;
-      await updateBlock(db, docId, previousEntry.blockId, joined);
+      const groupId = uuid();
+      await updateBlock(db, docId, previousEntry.blockId, joined, { groupId });
       // A merge, not a deletion: the text is now in the previous block, so this
       // leaves no ghost (ADR-0028).
-      await deleteBlock(db, docId, blockId, { mergedInto: previousEntry.blockId });
+      await deleteBlock(db, docId, blockId, { mergedInto: previousEntry.blockId, groupId });
 
       setTexts((prev) => {
         const next = new Map(prev);

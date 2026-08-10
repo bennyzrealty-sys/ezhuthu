@@ -71,6 +71,22 @@ export interface BlockEventPayload {
    * Absent on a deliberate delete, which is what leaves a ghost.
    */
   mergedInto?: BlockId;
+  /**
+   * The id of the event this one reverses (ADR-0033).
+   *
+   * An undo appends a compensating event; it never removes anything. This
+   * marker is what stops the next undo from reversing the reversal, and what
+   * lets the stack tell "already undone" from "still standing".
+   */
+  undoOf?: string;
+  /**
+   * Ties the events of ONE action together (ADR-0033).
+   *
+   * A split is an update plus an insert; a merge is an update plus a delete.
+   * The writer performed one action and expects one undo to take it back, so
+   * the events carry a shared id and are reversed as a unit.
+   */
+  groupId?: string;
 }
 
 export interface BlockEvent {

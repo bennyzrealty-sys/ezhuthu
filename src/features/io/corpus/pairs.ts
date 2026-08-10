@@ -20,6 +20,7 @@
 
 import type { BlockEvent } from '../../../db/types';
 import { compareEvents } from '../../../core/order';
+import { textAfterEvent } from '../../../core/history';
 import { COALESCE_WINDOW_MS } from './constants';
 
 /** One revision of one block, before session coalescing. */
@@ -88,15 +89,11 @@ export function revisionsForBlock(events: readonly BlockEvent[]): Revision[] {
   for (const event of ordered) {
     switch (event.type) {
       case 'insert': {
-        if (current === undefined) {
-          // Creation. Mirrors the fold: a missing text payload means empty.
-          current = event.payload.text ?? '';
-        } else {
-          // A restore (ADR-0018). Text comes back unchanged unless the event
-          // carries a replacement.
-          if (event.payload.text !== undefined) current = event.payload.text;
-          broken = true;
-        }
+        // Creation, or a restore that leaves the text standing (ADR-0018).
+        // `core/history.ts` holds that rule; undo reads the same one.
+        const wasLive = current !== undefined;
+        current = textAfterEvent(event, current);
+        if (wasLive) broken = true;
         break;
       }
 

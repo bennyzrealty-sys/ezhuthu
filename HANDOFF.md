@@ -422,7 +422,7 @@ through `setImmediate`. Fake `setTimeout`/`clearTimeout` only.
 
 ## Decisions already made — do not relitigate
 
-All 32 are in `DECISIONS.md`. The twenty-two that departed from the original brief:
+All 33 are in `DECISIONS.md`. The twenty-three that departed from the original brief:
 
 | ADR | Departure |
 |---|---|
@@ -448,6 +448,7 @@ All 32 are in `DECISIONS.md`. The twenty-two that departed from the original bri
 | 0030 | A revision is a change to prose that already existed — deletions and composition are not |
 | 0031 | File names handed to the browser are ASCII; the timestamp identifies the file |
 | 0032 | A revision is judged by the word that changed, never by the paragraph around it |
+| 0033 | Undo appends its reversal and never rewrites the log; the stack is one session |
 
 ## Corrections made so far
 
