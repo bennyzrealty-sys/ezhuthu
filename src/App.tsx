@@ -24,6 +24,13 @@ import {
   type PersistenceState,
 } from './db/persistence';
 import { pruneSignals } from './signals/queries';
+import {
+  DEFAULT_FEEDBACK,
+  hapticsSupported,
+  loadFeedback,
+  saveFeedback,
+  type FeedbackSettings,
+} from './features/visibility/feedback';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -83,6 +90,7 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [searching, setSearching] = useState(false);
   const [bookmarking, setBookmarking] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
   /*
    * The strip is an opening offer, not a panel. It is shown once per launch —
    * requirement 1 is "on open, return the writer to where he was working" — and
@@ -137,6 +145,22 @@ export default function App() {
     pruned.current = true;
     void pruneSignals(db).catch(() => undefined);
   }, [status]);
+
+  // Scroll-past feedback preferences (ADR-0022), off by default.
+  useEffect(() => {
+    void loadFeedback(db).then(setFeedback);
+  }, []);
+
+  const updateFeedback = useCallback(
+    (patch: Partial<FeedbackSettings>) => {
+      setFeedback((current) => {
+        const next = { ...current, ...patch };
+        void saveFeedback(db, next);
+        return next;
+      });
+    },
+    [],
+  );
 
   const onImport = useCallback(
     async (file: File) => {
@@ -288,6 +312,37 @@ export default function App() {
               </p>
             )}
           </section>
+
+          <section className="card">
+            <h2>Scrolling feedback</h2>
+            <label className="toggle-row">
+              <span>
+                Haptic tick past edits
+                {!hapticsSupported() && (
+                  <span className="note" style={{ margin: 0 }}>
+                    {' '}
+                    — unavailable on this device
+                  </span>
+                )}
+              </span>
+              <input
+                type="checkbox"
+                checked={feedback.haptics && hapticsSupported()}
+                disabled={!hapticsSupported()}
+                data-testid="feedback-haptics"
+                onChange={(e) => updateFeedback({ haptics: e.target.checked })}
+              />
+            </label>
+            <label className="toggle-row">
+              <span>Visual pulse past edits</span>
+              <input
+                type="checkbox"
+                checked={feedback.visualPulse}
+                data-testid="feedback-visual"
+                onChange={(e) => updateFeedback({ visualPulse: e.target.checked })}
+              />
+            </label>
+          </section>
         </div>
       )}
 
@@ -332,7 +387,14 @@ export default function App() {
         />
       )}
 
-      <DocumentView ref={view} key={reloadKey} db={db} docId={DOC_ID} onChange={refresh} />
+      <DocumentView
+        ref={view}
+        key={reloadKey}
+        db={db}
+        docId={DOC_ID}
+        onChange={refresh}
+        feedback={feedback}
+      />
     </div>
   );
 }

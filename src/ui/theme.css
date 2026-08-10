@@ -109,6 +109,20 @@ dl {
   margin: 0;
 }
 
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0;
+  cursor: pointer;
+}
+
+.toggle-row input {
+  min-width: 20px;
+  min-height: 20px;
+}
+
 .state-ok {
   color: var(--ok);
 }
@@ -284,6 +298,37 @@ button:disabled {
   );
   opacity: var(--mark-opacity, 0);
   pointer-events: none;
+}
+
+/*
+ * The visual pulse (ADR-0022): a brief widen-and-glow as the writer scrolls this
+ * edit through the centre. A cross-platform companion to the haptic tick, not a
+ * claimed substitute. Honoured off under reduced-motion.
+ */
+.block-mark.is-pulsing {
+  animation: mark-pulse 320ms ease-out;
+  transform-origin: left center;
+}
+
+@keyframes mark-pulse {
+  0% {
+    transform: scaleX(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  35% {
+    transform: scaleX(2.4);
+    box-shadow: 0 0 6px 2px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    transform: scaleX(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block-mark.is-pulsing {
+    animation: none;
+  }
 }
 
 /*

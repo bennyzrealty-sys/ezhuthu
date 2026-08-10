@@ -238,3 +238,23 @@ test.describe('scroll-back auto-bookmarks (docs/SIGNALS.md)', () => {
     await expect.poll(() => firstRenderedIndex(page)).toBeGreaterThan(250);
   });
 });
+
+test.describe('scroll-past feedback (ADR-0022)', () => {
+  test('the toggles persist, and haptics is honest about availability', async ({ page }) => {
+    await importCorpus(page, SMALL_DOC);
+    await page.locator('button', { hasText: 'Status' }).click();
+
+    const visual = page.locator('[data-testid="feedback-visual"]');
+    const haptics = page.locator('[data-testid="feedback-haptics"]');
+    // Off by default — feedback while scrolling is opt-in.
+    await expect(visual).not.toBeChecked();
+    // The haptics control is always present; where the API is absent it is
+    // disabled rather than silently doing nothing (ADR-0022).
+    await expect(haptics).toBeVisible();
+
+    await visual.check();
+    await page.reload();
+    await page.locator('button', { hasText: 'Status' }).click();
+    await expect(page.locator('[data-testid="feedback-visual"]')).toBeChecked();
+  });
+});

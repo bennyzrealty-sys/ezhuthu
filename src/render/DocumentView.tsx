@@ -35,6 +35,13 @@ import { Minimap } from './Minimap';
 import { Seam } from './Seam';
 import { markIntensity } from '../features/visibility/intensity';
 import { computeSeams, type Seams } from '../features/visibility/seams';
+import {
+  DEFAULT_FEEDBACK,
+  EditedRegionPulse,
+  haptic,
+  VISUAL_PULSE_MS,
+  type FeedbackSettings,
+} from '../features/visibility/feedback';
 import { SignalCollector } from '../signals/collector';
 
 /** Blocks rendered beyond the viewport on each side. */
@@ -73,6 +80,8 @@ export interface DocumentViewProps {
    * a scroll or an edit already forces — not on a timer of their own.
    */
   now?: () => number;
+  /** Scroll-past feedback (ADR-0022). Off by default. */
+  feedback?: FeedbackSettings;
   ref?: RefObject<DocumentViewHandle | null>;
 }
 
@@ -81,7 +90,14 @@ interface FocusTarget {
   caret: number;
 }
 
-export function DocumentView({ db, docId, onChange, now, ref }: DocumentViewProps) {
+export function DocumentView({
+  db,
+  docId,
+  onChange,
+  now,
+  feedback = DEFAULT_FEEDBACK,
+  ref,
+}: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
   const [seams, setSeams] = useState<Seams>({ before: new Map(), trailing: [] });
   const [texts, setTexts] = useState<Map<string, string>>(new Map());
@@ -89,6 +105,8 @@ export function DocumentView({ db, docId, onChange, now, ref }: DocumentViewProp
   const [loading, setLoading] = useState(true);
   const [highlight, setHighlight] = useState<RevealTarget | null>(null);
   const [signals, setSignals] = useState<SignalCollector | null>(null);
+  /** The block whose margin bar is mid visual-pulse (ADR-0022). */
+  const [pulseId, setPulseId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const heights = useRef(new HeightCache());
@@ -320,6 +338,68 @@ export function DocumentView({ db, docId, onChange, now, ref }: DocumentViewProp
   }, [db, docId, ready]);
 
   // -------------------------------------------------------------------------
+  // Scroll-past feedback (ADR-0022)
+  // -------------------------------------------------------------------------
+
+  /*
+   * A haptic tick and/or a visual pulse as an edited region crosses the centre.
+   * Read through refs so the passive scroll listener is installed once and never
+   * re-subscribes on an index or setting change.
+   *
+   * The centre block is found from the virtualiser's offsets — content-relative,
+   * like scrollTop — so this forces no layout on the scroll path, and the whole
+   * body is skipped when neither feedback is on. The pulse decision and the
+   * throttle live in EditedRegionPulse (ADR-0022: ≤ 1 per 300 ms).
+   */
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const clockRef = useRef<() => number>(now ?? Date.now);
+  clockRef.current = now ?? Date.now;
+  const regionPulse = useRef(new EditedRegionPulse());
+  const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element === null) return;
+
+    let lastProcessed = 0;
+    const onScroll = (): void => {
+      const settings = feedbackRef.current;
+      if (!settings.haptics && !settings.visualPulse) return;
+
+      const at = clockRef.current();
+      // Coarser than a frame: crossing a paragraph does not need 60 Hz.
+      if (at - lastProcessed < 100) return;
+      lastProcessed = at;
+
+      const centre = element.scrollTop + element.clientHeight / 2;
+      const item = virtualizer
+        .getVirtualItems()
+        .find((it) => centre >= it.start && centre < it.start + it.size);
+      const entry = item === undefined ? undefined : indexRef.current[item.index];
+      const edited =
+        entry !== undefined && markIntensity(entry, at) !== null ? entry.blockId : undefined;
+
+      if (!regionPulse.current.shouldPulse(edited, at)) return;
+
+      if (settings.haptics) haptic();
+      if (settings.visualPulse && edited !== undefined) {
+        setPulseId(edited);
+        if (pulseTimer.current !== null) clearTimeout(pulseTimer.current);
+        pulseTimer.current = setTimeout(() => setPulseId(null), VISUAL_PULSE_MS);
+      }
+    };
+
+    element.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      element.removeEventListener('scroll', onScroll);
+      if (pulseTimer.current !== null) clearTimeout(pulseTimer.current);
+    };
+  }, [virtualizer, ready]);
+
+  // -------------------------------------------------------------------------
   // Editing
   // -------------------------------------------------------------------------
 
@@ -535,7 +615,11 @@ export function DocumentView({ db, docId, onChange, now, ref }: DocumentViewProp
                 )}
                 <div className="doc-block">
                   {intensity !== null && (
-                    <MarginBar blockId={entry.blockId} intensity={intensity} />
+                    <MarginBar
+                      blockId={entry.blockId}
+                      intensity={intensity}
+                      pulsing={pulseId === entry.blockId}
+                    />
                   )}
                   {focused ? (
                     <>

@@ -21,12 +21,14 @@ import type { Intensity } from '../features/visibility/intensity';
 export interface MarginBarProps {
   blockId: string;
   intensity: Intensity;
+  /** Mid visual-pulse from scrolling past this edit (ADR-0022). */
+  pulsing?: boolean;
 }
 
-function MarginBarImpl({ blockId, intensity }: MarginBarProps) {
+function MarginBarImpl({ blockId, intensity, pulsing = false }: MarginBarProps) {
   return (
     <span
-      className="block-mark"
+      className={`block-mark${pulsing ? ' is-pulsing' : ''}`}
       // Decorative: the same information reaches assistive tech through the
       // block's edit history, not a coloured stripe.
       aria-hidden="true"
