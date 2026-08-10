@@ -111,8 +111,15 @@ describe('backup contents', () => {
     expect(name).toMatch(/^ezhuthu-.+\.json$/);
     expect(name).not.toContain(' ');
     expect(name).not.toContain(':');
-    // Malayalam is \p{L} — the title should not be stripped to nothing.
-    expect(name).toMatch(/[ഀ-ൿ]/);
+    /*
+     * The whole title, not merely some Malayalam. Asserting only that a
+     * Malayalam character survived is what let this through: vowel signs and
+     * the virama are combining marks, so a keep-set of letters and digits
+     * passed a test like that while writing എന-റ-ന-വൽ — every base consonant
+     * intact and every mark replaced with a dash. Marks travel with their
+     * cluster (Rule 1).
+     */
+    expect(name).toBe('ezhuthu-എന്റെ-നോവൽ-2023-11-14T22-13-20.json');
   });
 });
 

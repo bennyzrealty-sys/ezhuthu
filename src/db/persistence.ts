@@ -145,7 +145,11 @@ export async function buildBackup(db: EzhuthuDB, now = Date.now()): Promise<Back
 export function backupFilename(docs: readonly Doc[], now: number): string {
   const stamp = new Date(now).toISOString().slice(0, 19).replaceAll(':', '-');
   const title = docs.length === 1 ? (docs[0]!.title || 'untitled') : 'all-documents';
-  const safe = title.replaceAll(/[^\p{L}\p{N}._-]+/gu, '-').slice(0, 60);
+  // \p{M} is not decoration. A Malayalam vowel sign is a combining mark, so a
+  // keep-set of letters and digits alone strips the marks out of every word and
+  // writes the backup of എന്റെ നോവൽ to a file called എന-റ-ന-വൽ. Marks belong to
+  // the cluster of their base by definition (Rule 1) and travel with it.
+  const safe = title.replaceAll(/[^\p{L}\p{M}\p{N}._-]+/gu, '-').slice(0, 60);
   return `ezhuthu-${safe}-${stamp}.json`;
 }
 
