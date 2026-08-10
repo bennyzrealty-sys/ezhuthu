@@ -74,19 +74,23 @@ ignore red builds. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Current status
 
-**Phase 3 — Malayalam complete.** On top of Phases 1 and 2: Manjari bundled and subset with its
-shaping tables intact, and in-app search that runs as a cursor over the store, folding chillu so
-it finds words the reader can see rather than only the byte sequence they happen to be stored as.
+**Phase 6 — Visibility complete.** On top of Phases 1–5, this is requirement 2: making edited
+lines identifiable at a glance. A margin intensity bar (opacity for recency, saturation for
+revision count, decayed at render time), a bucketed minimap of the whole document, ghost markers
+that reveal and restore deleted paragraphs, auto-bookmarks built from where the writer keeps
+scrolling back, and opt-in haptic/visual feedback while scrolling past edits.
 
-Measured against the 80,022-word synthetic Malayalam corpus, every budget has headroom:
+Measured against the 80,022-word synthetic Malayalam corpus, every budget still has headroom, and
+nothing regressed against Phase 5 — the new work is a few map lookups per rendered row, a canvas
+redrawn only on edit, and a scroll handler that does nothing until enabled:
 
 | Metric | Budget | Measured |
 |---|---|---|
-| Cold open | < 1.5 s | **138–163 ms** |
-| Keystroke handler | < 16 ms | **0.86 ms** median, 1.22 ms p95 |
-| Scroll frame interval | < 33 ms p95 | **17.0 ms** p95 |
-| Memory | < 150 MB | **3.7 MB** |
-| Search, whole-document miss | < 250 ms | **~88 ms** scan |
+| Cold open | < 1.5 s | **156–180 ms** |
+| Keystroke handler | < 16 ms | **0.78–0.81 ms** median, 1.08–1.14 ms p95 |
+| Scroll frame interval | < 33 ms p95 | **17.1 ms** p95 |
+| Memory | < 150 MB | **4.2 MB** |
+| Search, whole-document miss | < 250 ms | **~70–77 ms** scan |
 | Blocks in the DOM | — | **12** of 1,563 |
 
 Build order and per-phase state live in [`HANDOFF.md`](HANDOFF.md), which is updated at the end
@@ -99,7 +103,7 @@ of every working session. Read it first if you are picking this up cold.
 | 3 | Malayalam — segmentation, normalisation, fonts, search | **done** |
 | 4 | Signals — attention telemetry | **done** |
 | 5 | Resume — the four-destination strip | **done** |
-| 6 | Visibility — margin bar, decay, minimap, haptics, ghost markers | not started |
+| 6 | Visibility — margin bar, decay, minimap, ghost markers, haptics | **done** |
 | 7 | Time-lapse + export — scrub UI, edit corpus | not started |
 | 8 | PWA polish — install flow, offline verification | not started |
 

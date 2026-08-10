@@ -3,21 +3,27 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-09 · end of Phase 5
+**Last updated:** 2026-08-10 · end of Phase 6
 
 ---
 
 ## Where the project is
 
-**Phases 1 through 5 complete.** The event log and its durability layer work, there is a working
+**Phases 1 through 6 complete.** The event log and its durability layer work, there is a working
 editor on top of them, the document renders in a bundled Malayalam face that shapes correctly,
 search finds words the reader can see anywhere in a 1,563-block document, the app measures where
-attention actually was — and, as of Phase 5, it uses that to answer requirement 1: on open, offer
-the writer his way back to where he was working.
+attention actually was and uses it to offer the writer his way back in (requirement 1) — and, as
+of Phase 6, **edited lines are identifiable at a glance (requirement 2):** a margin bar, a
+minimap, ghost markers for deletions, auto-bookmarks, and scroll-past feedback. Both project
+requirements now have an answer.
 
-**Phases 1-4 are merged to `main`** (PRs #1, #2 and #3). Phase 5 is on
-`claude/ezhuthu-phase5-resume`. Start Phase 6 from a fresh branch off whatever has landed
-on `main`:
+**Phases 1-4 are merged to `main`** (PRs #1, #2 and #3). **Phase 5 is open in draft PR #4** on
+`claude/ezhuthu-phase5-resume`. **Phase 6 is this branch, `claude/continue-previous-6smqet`,
+stacked on the Phase 5 branch** — Phase 6 builds on Phase 5 and Phase 5 has not landed yet. When
+Phase 5 merges, rebase Phase 6 onto `main` (its PR base is the Phase 5 branch, so the diff shows
+Phase 6 alone).
+
+Start Phase 7 from a fresh branch off whatever has landed on `main`:
 
 ```bash
 git fetch origin main && git checkout -B <new-branch> origin/main
@@ -74,42 +80,75 @@ virtualiser to a result and marks it.
 - **ADR-0026** — "last read" is the deepest paragraph *dwelled on* last session, not a stored
   scroll offset.
 
-**`scrollback` is still the one signal nothing reads.** Phase 6's auto-bookmarks are its consumer.
+**Visibility (Phase 6).** Requirement 2, in `src/features/visibility/` and `src/render/`:
 
-**Tests: 248 unit + 36 e2e + 6 perf, all passing.**
+- **`intensity.ts`** — PURE. The value behind the margin bar and the minimap: opacity from
+  `updatedAt` decayed in ADR-0006's bands, saturation from `revisionCount`. Returns `null` for a
+  never-revised block, so an import lights nothing (ADR-0027, the same `revisionCount > 0` filter
+  as "last edited"). Stores nothing; time is a parameter.
+- **`MarginBar.tsx`** — the 4 px gutter bar (ADR-0005). One hue mixed toward neutral by saturation
+  and faded by opacity, so the signal is never hue (colour-blind safe). A sibling of the block
+  inside `.doc-block`, so it cannot reflow a glyph and it aligns even when a seam sits above.
+- **`minimap.ts` + `Minimap.tsx`** — the bucketed minimap (ADR-0021), drawn to a canvas. One
+  bucket per device-pixel row, each the *maximum* intensity of its blocks; a tap jumps to the
+  winning block or a proportional position. O(1) in document size; reads only the index. Memoised
+  so it does not redraw while scrolling.
+- **`seams.ts` + `Seam.tsx`** — ghost markers (ADR-0018). A seam at every deletion join reveals the
+  deleted text and restores it in place; consecutive deletions collapse into one. A merge leaves no
+  ghost (ADR-0028) — its `delete` carries `mergedInto`, the fold records it on `meta`, and seam
+  computation skips it. A deliberate **Delete** control on the focused block is what makes a ghost.
+- **`bookmarks.ts` + `BookmarksPanel.tsx`** — the `scrollback` signal's consumer at last: the
+  places the writer keeps returning to, ranked by how often, reached from the toolbar.
+- **`feedback.ts`** — haptic tick and/or visual pulse past an edit (ADR-0022), both opt-in and off
+  by default; haptics feature-detected and shown unavailable where the API is absent. The
+  when-to-pulse decision is pure and unit-tested; the scroll handler forces no layout and is inert
+  until enabled.
+
+**Tests: 286 unit + 47 e2e + 6 perf, all passing.**
 
 ## Measured performance
 
 Against the 80,022-word / 1,563-block synthetic Malayalam corpus, in this container, perf suite
 serial. Ranges are across three runs.
 
-| Metric | Budget | Phase 4 | Phase 3 |
+| Metric | Budget | Phase 6 | Phase 5 |
 |---|---|---|---|
-| Cold open | < 1.5 s | **151–174 ms** | 138–163 ms |
-| Keystroke handler | < 16 ms | **0.79–0.93 ms median, 1.08–1.41 ms p95** | 0.83–0.92 ms median, 1.28 ms p95 |
-| Frame interval while typing | < 33 ms p95 | **16.9–17.0 ms** | 16.9–20.2 ms |
-| Scroll frame interval | < 33 ms p95 | **17.1–17.3 ms p95** | 17.0–17.3 ms p95 |
-| Memory after full scroll | < 150 MB | **3.8–4.0 MB** | 3.6–3.7 MB |
-| Search, whole-document miss | < 250 ms scan | **71–79 ms** | 83–94 ms |
-| Search, 1,064 matches | < 250 ms scan | **91–93 ms** | 116–120 ms |
+| Cold open | < 1.5 s | **156–180 ms** | 154–188 ms |
+| Keystroke handler | < 16 ms | **0.78–0.81 ms median, 1.08–1.14 ms p95** | 0.78–0.83 ms median |
+| Frame interval while typing | < 33 ms p95 | **16.8–16.9 ms** | 16.8–16.9 ms |
+| Scroll frame interval | < 33 ms p95 | **17.1 ms p95** | 17.1–17.2 ms p95 |
+| Memory after full scroll | < 150 MB | **4.2 MB** | 3.8–4.2 MB |
+| Search, whole-document miss | < 250 ms scan | **70–77 ms** | 73–91 ms |
+| Search, 1,064 matches | < 250 ms scan | **94–105 ms** | — |
 | Blocks in DOM | — | **12** of 1,563 | 12 |
 
-**Signals cost nothing measurable**, which is the result the phase was watching for: this is the
-first feature that competes with typing. What the keystroke handler gained is two map lookups and
-a subtraction; everything else is on a 1 s timer or a 2 s flush.
+**Visibility cost nothing measurable against Phase 5.** The margin bar is a few map lookups per
+rendered row (~12), the minimap is a canvas redrawn only when the index changes (not on scroll),
+seams are computed in the one ordered read the index already does, and the scroll-feedback handler
+is inert until a setting turns it on — so with feedback off, the perf run's scroll path is
+untouched.
 
 ## What does not work yet
 
-- **No margin bar, minimap, ghost markers, time-lapse or corpus export.** Phases 6-7. Nothing is
-  stubbed — an empty button is worse than an absent one.
-- **The `scrollback` signal has no consumer.** It is recorded and pruned and read by nobody until
-  Phase 6's auto-bookmarks.
+- **No time-lapse or corpus export.** Phase 7. Nothing is stubbed — an empty button is worse than
+  an absent one.
+- **The margin bar decays on re-render, not on a timer.** DocumentView reads the clock once per
+  render, so a bar fades when a scroll or edit re-renders the list — not while the reader sits
+  still on one screen for an hour. Acceptable (fading is slow); a periodic re-render would fix it if
+  it ever matters.
+- **The minimap maps by block index, not pixel height.** Buckets are assigned by position in the
+  ordered list, so a bucket's *vertical* position is only approximate against a document of uneven
+  block heights (ADR-0021 accepts this). The *jump* is exact — the bucket carries the block index.
+- **Ghost restore of a merge is deliberately impossible** (ADR-0028). A merge leaves no seam; its
+  text lives in the neighbour. The `meta.mergedInto` needed for a future "unmerge" is recorded, but
+  unmerge is not built.
 - **Resume does not restore a scroll position, and deliberately does not** (ADR-0026). It offers
   four blocks. A writer who revises backwards through a manuscript gets "deepest" where he means
   "where I stopped"; the ADR names the switch and the data for it is already stored.
-- **The ADR-0017 constants have never been revisited against real use.** 60 s, 1 s, the 2 s
-  scroll-back dwell and the 2 s hesitation floor are all guesses. They are in one module for
-  exactly this reason.
+- **The ADR-0017 constants, and Phase 6's tunables, have never been revisited against real use.**
+  60 s, 1 s, the 2 s scroll-back dwell, the 2 s hesitation floor, `REWRITE_WINDOW_DAYS`, and the
+  ADR-0006 decay bands / saturation curve are all guesses. A resume or bookmark suggestion that
+  feels wrong, or a margin bar that fades too fast or slow, is the symptom to watch for.
 - **Signals are flushed on `visibilitychange` only**, not `pagehide`. On the platforms that matter
   this fires before freeze; if a device is found where it does not, that is where to look for
   missing telemetry.
@@ -120,27 +159,32 @@ a subtraction; everything else is on a 1 s timer or a 2 s flush.
   results cap at 100 paragraphs with an honest count past the cap.
 - **No cross-block selection**, by design (ADR-0011). Of the three mitigations named there,
   in-app search now exists; **range-select mode and the copy affordances do not.**
-- **Deleted blocks are dropped from the index**, so merging two blocks leaves a soft-deleted
-  record with no seam rendered. Ghost markers are Phase 6; the data is already there.
-- **Service worker asset list is hand-maintained.**
+- **The scroll-past visual pulse has no e2e.** Vibration can't be asserted in a headless browser
+  and the pulse-on-scroll is timing-sensitive; `EditedRegionPulse` is unit-tested and the e2e
+  covers the settings and their honesty. The pulse on a real scroll is manual-only.
+- **Service worker asset list is hand-maintained.** (Phase 6 needed no change — its code is in the
+  JS bundle, which is runtime-cached, not in the hand-listed shell of fonts/icons/manifest.)
 - **`memory` perf test needs cross-origin isolation**, supplied by `vite.config.ts`
   `preview.headers`. It will silently skip if those headers are ever removed.
 
 ## The next three tasks
 
-1. **Visibility** (Phase 6). Margin bar with time decay (ADR-0005, ADR-0006), the bucketed
-   minimap (ADR-0021), ghost markers for deletions (ADR-0018), haptics where they exist
-   (ADR-0022), and the scroll-back auto-bookmarks Phase 4 has been recording since it landed.
-   Everything it needs is in `updatedAt`, `revisionCount` and the `scrollback` signal.
+1. **Time-lapse + export** (Phase 7). The scrub UI that materialises past states — the reason
+   snapshots exist (ADR-0009) and run in a Worker — and the edit-corpus export (ADR-0012, ADR-0016):
+   (before, after) pairs walked from the log per block, session-coalesced and triviality-filtered
+   at export. Both are batch operations where cost does not matter, which is the whole point of
+   deferring them here.
 
 2. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
    mitigation is still outstanding. Whole-block granularity by tap and extend; copy block, copy
-   range, copy document.
+   range, copy document. Block-granular selection composes naturally with the Phase 6 Delete
+   affordance and ghost markers.
 
-3. **Revisit the guessed constants** — the four in `signals/constants.ts` (ADR-0017) and
-   `REWRITE_WINDOW_DAYS` in `features/resume/destinations.ts`. This one needs a person writing in
-   the app for a few sessions; no automated run can substitute for it. A resume suggestion that
-   feels wrong is the symptom to watch for.
+3. **Revisit the guessed constants** — the four in `signals/constants.ts` (ADR-0017),
+   `REWRITE_WINDOW_DAYS` in `features/resume/destinations.ts`, and the ADR-0006 decay bands and
+   saturation curve in `features/visibility/intensity.ts`. This needs a person writing in the app
+   for a few sessions; no automated run substitutes for it. A resume suggestion that feels wrong, or
+   a margin bar that fades wrong, is the symptom.
 
 ## Traps a fresh session will fall into
 
@@ -242,6 +286,43 @@ that is what makes the ADR-0017 tests possible.
 restore. Absent `afterBlockId` means "append at end" for a fresh insert but "put it back where it
 was" for a restore. Deliberate, and tested.
 
+**A merge is a soft delete, but must not leave a ghost.** Backspace-at-start deletes the emptied
+block, and its text now lives in the neighbour. `mergeBack` passes `mergedInto` so the fold records
+`meta.mergedInto` and `computeSeams` skips it (ADR-0028). Drop that and every Backspace-merge grows
+a seam whose "restore" duplicates text. A *deliberate* delete (the Delete button) omits `mergedInto`
+— that is the only thing that should ever make a ghost.
+
+**The margin bar keys off `revisionCount > 0`, not `updatedAt` alone** (ADR-0027). `markIntensity`
+returns `null` for a never-revised block, so an import lights nothing. If you make the bar decay
+purely on `updatedAt`, the whole document glows the instant it is imported and the feature says
+nothing. Same filter, same reason, as the "last edited" resume destination.
+
+**The delete affordance fires on `onMouseDown`, not `onClick`.** A click would blur the editor
+first, committing and clearing focus before the handler ran, and the button would be gone. It calls
+`preventDefault()` to keep the blur from happening at all. (Symmetric to the `click`-not-
+`pointerdown` rule for opening the editor, for the opposite reason.)
+
+**The minimap reads the palette from the canvas element, and redraws on a theme flip.** Canvas
+cannot use CSS `color-mix`, so `Minimap.tsx` parses `--accent` and `--ink-muted` via
+`getComputedStyle` and interpolates in JS. It listens on `matchMedia('(prefers-color-scheme:
+dark)')` so a theme change repaints; a `data-theme` toggle that does not go through that media query
+would need another trigger.
+
+**A seam's revealed state is local and collapses when the row recycles.** The `Seam` lives inside a
+virtualised `.doc-item`; scroll it out and back and it remounts collapsed. That is fine — reveal is
+a momentary action — but do not build anything that assumes a seam stays open across a scroll.
+
+**Scroll-past feedback must stay off the scroll budget.** The handler in `DocumentView` reads state
+through refs, finds the centre block from the virtualiser's content-relative offsets (no layout
+read), throttles to ~10 Hz, and returns immediately when both toggles are off. Anything heavier
+here lands on the 33 ms scroll frame. The pulse decision itself is pure (`EditedRegionPulse`).
+
+**The minimap wraps the scroller in `.doc-viewport`.** DocumentView's main return is
+`.doc-viewport > (.doc-scroll + <Minimap>)`, and the flex sizing moved from `.doc-scroll` to
+`.doc-viewport` (`theme.css`). The loading/empty early returns are still bare `.doc-empty`. If you
+restructure the return, keep the scroller a direct measured child or the virtualiser's height math
+breaks.
+
 **Playwright needs `PLAYWRIGHT_CHROMIUM_PATH`** in this container — the preinstalled Chromium
 build (1194) does not match the one this Playwright version wants (1234). Set it to
 `/opt/pw-browsers/chromium`. CI installs its own browser and leaves it unset.
@@ -255,7 +336,7 @@ through `setImmediate`. Fake `setTimeout`/`clearTimeout` only.
 
 ## Decisions already made — do not relitigate
 
-All 26 are in `DECISIONS.md`. The fifteen that departed from the original brief:
+All 28 are in `DECISIONS.md`. The seventeen that departed from the original brief:
 
 | ADR | Departure |
 |---|---|
@@ -275,6 +356,8 @@ All 26 are in `DECISIONS.md`. The fifteen that departed from the original brief:
 | 0024 | The subsetter's defaults were never the danger; the guarantee moves to the output |
 | 0025 | Dwell is sampled on a timer; no `IntersectionObserver` |
 | 0026 | "Last read" is the deepest paragraph dwelled on, not a scroll offset |
+| 0027 | The margin bar marks revision (`revisionCount > 0`), not arrival, so imports do not light |
+| 0028 | A merge is not a deletion and leaves no ghost; `delete` carries `mergedInto` |
 
 ## Corrections made so far
 
