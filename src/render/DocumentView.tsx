@@ -30,6 +30,8 @@ import { HeightCache } from './measure';
 import { caretOffsetFromPoint } from './caret';
 import { BlockRow } from './BlockRow';
 import { BlockEditor } from './BlockEditor';
+import { MarginBar } from './MarginBar';
+import { markIntensity } from '../features/visibility/intensity';
 import { SignalCollector } from '../signals/collector';
 
 /** Blocks rendered beyond the viewport on each side. */
@@ -61,6 +63,13 @@ export interface DocumentViewProps {
   db: EzhuthuDB;
   docId: DocId;
   onChange?: () => void;
+  /**
+   * Clock for margin-bar decay (ADR-0006, CLAUDE.md rule 8). Injected rather
+   * than called inside the render so the decay is testable; real callers omit
+   * it. Read once per render, so bars fade whenever the list re-renders — which
+   * a scroll or an edit already forces — not on a timer of their own.
+   */
+  now?: () => number;
   ref?: RefObject<DocumentViewHandle | null>;
 }
 
@@ -69,7 +78,7 @@ interface FocusTarget {
   caret: number;
 }
 
-export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
+export function DocumentView({ db, docId, onChange, now, ref }: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
   const [texts, setTexts] = useState<Map<string, string>>(new Map());
   const [focus, setFocus] = useState<FocusTarget | null>(null);
@@ -425,6 +434,10 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
   const total = virtualizer.getTotalSize();
   const measureRef = useMemo(() => virtualizer.measureElement, [virtualizer]);
 
+  // One clock read per render feeds every bar's decay, so the whole document
+  // ages against a single instant rather than each bar reading its own.
+  const nowMs = (now ?? Date.now)();
+
   if (loading) {
     return <div className="doc-empty">തുറക്കുന്നു…</div>;
   }
@@ -441,6 +454,7 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
           if (entry === undefined) return null;
           const text = texts.get(entry.blockId);
           const focused = focus?.blockId === entry.blockId;
+          const intensity = markIntensity(entry, nowMs);
 
           return (
             <div
@@ -450,6 +464,7 @@ export function DocumentView({ db, docId, onChange, ref }: DocumentViewProps) {
               className="doc-item"
               style={{ transform: `translateY(${item.start}px)` }}
             >
+              {intensity !== null && <MarginBar blockId={entry.blockId} intensity={intensity} />}
               {focused ? (
                 <BlockEditor
                   blockId={entry.blockId}

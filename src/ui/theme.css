@@ -212,6 +212,35 @@ button:disabled {
 }
 
 /*
+ * The margin intensity bar (ADR-0005, ADR-0006, ADR-0027).
+ *
+ * Two dimensions in 4 px: opacity is recency, saturation is revision count.
+ * The colour is one hue — the accent — mixed toward a neutral grey by
+ * saturation, so the signal is opacity and saturation and never hue, which is
+ * what makes it colour-blind safe (ADR-0005).
+ *
+ * Absolutely positioned in the item's left gutter (`.doc-item` has 1rem of
+ * padding), so it sits clear of the text and cannot reflow a single glyph —
+ * the same reason the search mark carries no metrics. Non-interactive: it is a
+ * peripheral-vision signal, not a target.
+ */
+.block-mark {
+  position: absolute;
+  left: 0.25rem;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 4px;
+  border-radius: 2px;
+  background: color-mix(
+    in srgb,
+    var(--accent) calc(var(--mark-saturation, 0) * 100%),
+    var(--ink-muted)
+  );
+  opacity: var(--mark-opacity, 0);
+  pointer-events: none;
+}
+
+/*
  * A read-only row and the focused editor MUST render text identically. Any
  * difference in font, size, line-height, padding or width makes the text jump
  * at the moment of tapping — which is precisely when the reader is looking at
