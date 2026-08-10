@@ -31,6 +31,7 @@ import { caretOffsetFromPoint } from './caret';
 import { BlockRow } from './BlockRow';
 import { BlockEditor } from './BlockEditor';
 import { MarginBar } from './MarginBar';
+import { Minimap } from './Minimap';
 import { markIntensity } from '../features/visibility/intensity';
 import { SignalCollector } from '../signals/collector';
 
@@ -438,6 +439,13 @@ export function DocumentView({ db, docId, onChange, now, ref }: DocumentViewProp
   // ages against a single instant rather than each bar reading its own.
   const nowMs = (now ?? Date.now)();
 
+  // Stable so the minimap — memoised on the index — does not redraw on every
+  // scroll frame. The virtualiser instance is stable across renders.
+  const jumpToIndex = useCallback(
+    (i: number) => virtualizer.scrollToIndex(i, { align: 'center' }),
+    [virtualizer],
+  );
+
   if (loading) {
     return <div className="doc-empty">തുറക്കുന്നു…</div>;
   }
@@ -447,50 +455,53 @@ export function DocumentView({ db, docId, onChange, now, ref }: DocumentViewProp
   }
 
   return (
-    <div className="doc-scroll" ref={scrollRef}>
-      <div className="doc-inner" style={{ height: `${total}px` }}>
-        {items.map((item) => {
-          const entry = index[item.index];
-          if (entry === undefined) return null;
-          const text = texts.get(entry.blockId);
-          const focused = focus?.blockId === entry.blockId;
-          const intensity = markIntensity(entry, nowMs);
+    <div className="doc-viewport">
+      <div className="doc-scroll" ref={scrollRef}>
+        <div className="doc-inner" style={{ height: `${total}px` }}>
+          {items.map((item) => {
+            const entry = index[item.index];
+            if (entry === undefined) return null;
+            const text = texts.get(entry.blockId);
+            const focused = focus?.blockId === entry.blockId;
+            const intensity = markIntensity(entry, nowMs);
 
-          return (
-            <div
-              key={entry.blockId}
-              data-index={item.index}
-              ref={measureRef}
-              className="doc-item"
-              style={{ transform: `translateY(${item.start}px)` }}
-            >
-              {intensity !== null && <MarginBar blockId={entry.blockId} intensity={intensity} />}
-              {focused ? (
-                <BlockEditor
-                  blockId={entry.blockId}
-                  initialText={text ?? ''}
-                  initialCaret={focus.caret}
-                  onCommit={(id, value) => void commit(id, value)}
-                  onSplit={(id, before, after) => void split(id, before, after)}
-                  onMergeBack={(id, value) => void mergeBack(id, value)}
-                  onBlur={(id, value) => void blur(id, value)}
-                  onHeight={reportHeight}
-                  typing={signals?.typing}
-                />
-              ) : (
-                <BlockRow
-                  blockId={entry.blockId}
-                  text={text ?? ''}
-                  onActivate={activate}
-                  highlight={
-                    highlight?.blockId === entry.blockId ? highlight.match : undefined
-                  }
-                />
-              )}
-            </div>
-          );
-        })}
+            return (
+              <div
+                key={entry.blockId}
+                data-index={item.index}
+                ref={measureRef}
+                className="doc-item"
+                style={{ transform: `translateY(${item.start}px)` }}
+              >
+                {intensity !== null && <MarginBar blockId={entry.blockId} intensity={intensity} />}
+                {focused ? (
+                  <BlockEditor
+                    blockId={entry.blockId}
+                    initialText={text ?? ''}
+                    initialCaret={focus.caret}
+                    onCommit={(id, value) => void commit(id, value)}
+                    onSplit={(id, before, after) => void split(id, before, after)}
+                    onMergeBack={(id, value) => void mergeBack(id, value)}
+                    onBlur={(id, value) => void blur(id, value)}
+                    onHeight={reportHeight}
+                    typing={signals?.typing}
+                  />
+                ) : (
+                  <BlockRow
+                    blockId={entry.blockId}
+                    text={text ?? ''}
+                    onActivate={activate}
+                    highlight={
+                      highlight?.blockId === entry.blockId ? highlight.match : undefined
+                    }
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
+      <Minimap blocks={index} onJump={jumpToIndex} now={now} />
     </div>
   );
 }

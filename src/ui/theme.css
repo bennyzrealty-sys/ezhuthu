@@ -185,14 +185,49 @@ button:disabled {
    Document
    --------------------------------------------------------------------------- */
 
-.doc-scroll {
+/*
+ * The scroller and the minimap share this box. Relative so the minimap can pin
+ * itself to the right edge; a flex row so the scroller takes the width the
+ * minimap does not.
+ */
+.doc-viewport {
+  position: relative;
+  display: flex;
   height: 100dvh;
+}
+
+.doc-scroll {
+  flex: 1;
+  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   /* Keeps the virtualiser's absolutely-positioned children in its own layer
      rather than promoting the whole document. */
   contain: strict;
   -webkit-overflow-scrolling: touch;
+}
+
+/*
+ * The minimap column (ADR-0021). A thin canvas pinned to the right edge. It
+ * overlays the scrollbar gutter rather than taking a flex track of its own, so
+ * on a phone it costs no reading width; the document's centred measure leaves
+ * this space empty on wider screens anyway.
+ */
+.doc-minimap {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: pointer;
+  /* A faint track so the column is discoverable and tappable where it is cold. */
+  background: color-mix(in srgb, var(--ink-muted) 12%, transparent);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.doc-minimap:hover {
+  background: color-mix(in srgb, var(--ink-muted) 20%, transparent);
 }
 
 .doc-inner {
@@ -334,8 +369,9 @@ button:disabled {
   height: 100dvh;
 }
 
-.doc-layout .doc-scroll {
+.doc-layout .doc-viewport {
   flex: 1;
+  min-height: 0;
   height: auto;
 }
 
