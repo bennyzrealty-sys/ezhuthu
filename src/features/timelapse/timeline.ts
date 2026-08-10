@@ -114,9 +114,18 @@ function thin(stops: readonly TimelineStop[], limit: number): TimelineStop[] {
   for (let i = 0; i < limit; i += 1) {
     const from = Math.floor(i * slot);
     const to = Math.min(stops.length, Math.floor((i + 1) * slot));
-    const range = stops.slice(from, to);
-    if (range.length === 0) continue;
-    kept.push(range.findLast((s) => s.endsSession) ?? range.at(-1)!);
+    if (to <= from) continue;
+
+    // The latest session end in this slot, or its last stop if it holds none.
+    // `findLast` would say this, and is ES2023; the build targets ES2022.
+    let chosen = stops[to - 1]!;
+    for (let j = to - 1; j >= from; j -= 1) {
+      if (stops[j]!.endsSession) {
+        chosen = stops[j]!;
+        break;
+      }
+    }
+    kept.push(chosen);
   }
 
   const last = stops.at(-1)!;
