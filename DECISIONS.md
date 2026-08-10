@@ -1435,3 +1435,75 @@ Writing a blank paragraph over someone's work is worse than a button that says i
   both need. Two definitions of that would eventually disagree, and the one that disagreed would
   publish a paragraph that never existed.
 - Finding what to undo reads a bounded tail of the log (`UNDO_WINDOW_EVENTS`), not the whole thing.
+
+---
+
+## ADR-0034 — The app is installed from a URL, and the URL may not be at the origin root
+
+**Status:** accepted
+
+**Context.** The app had never been deployed. Asked for a link to install it on a phone, there was
+none to give: a PWA has no APK and no store listing, so the only route onto a home screen is an
+HTTPS URL the phone's browser can open and "Add to Home Screen" from. Rule 9 — nothing leaves the
+device — is about *user data*, not about the app's own static assets; serving the shell over the
+network is how the shell gets onto the device in the first place, and after the first load the
+service worker means it never needs to again.
+
+The obvious host is the repository's own GitHub Pages, because it needs no third-party account and
+it deploys from the repository that already exists. It has one property that the app was not
+written for: a **project site is served from `/<repo>/`, not from `/`**. Every path the app hands
+the network was origin-absolute — the manifest link, the font preload, the icons, the
+`@font-face`, the service worker registration, and the worker's own precache list.
+
+Origin-absolute paths do not fail loudly under a sub-path. They fail as a page that loads and then
+looks broken: the manifest 404s so the install prompt never appears, the font 404s so
+`font-display: block` shows nothing where the Malayalam should be, and the worker registration
+404s so the app is not offline-capable — which is the whole claim.
+
+**Decision.** **Everything the app requests is relative to the base it was built for**, and the
+base is a build input (`BASE_PATH`), defaulting to `/`.
+
+| Layer | How it learns the base |
+|---|---|
+| `index.html`, bundled CSS | Vite rewrites origin-absolute public paths to `base` at build time |
+| `manifest.webmanifest` | Relative URLs (`start_url: "."`, `./icons/…`), resolved against the manifest's own URL |
+| Service worker registration | `import.meta.env.BASE_URL`, for both the script URL and the scope |
+| Inside the worker | `new URL(path, self.registration.scope)` |
+
+The two files that are *copied* rather than built — the manifest and `sw.js` — are the two that
+cannot be told the base at build time, and they are exactly the two that resolve it at runtime
+instead. That is not a coincidence to be tidied away later; it is the reason each uses the
+mechanism it does.
+
+`BASE_PATH` unset means the origin root, which is what `vite dev`, `vite preview`, the Playwright
+suites and `vercel.json` all want. Only the Pages workflow sets it.
+
+**Alternatives considered.**
+
+- *A user/organisation site (`<user>.github.io`), served from the root.* Sidesteps the whole
+  problem and costs a second repository, and it would have hidden a real portability bug rather
+  than fixing it. The app should be servable from a sub-path.
+- *Hard-code `base: '/ezhuthu/'`.* Breaks the dev server, the preview server and every Playwright
+  project, all of which assume the root — and breaks silently for anyone hosting it elsewhere.
+- *Vercel, per `vercel.json`.* Still supported and still root-served; nothing here changes it. It
+  needs an account and a manual link, so it cannot be the answer to "give me a link" from inside
+  the repository.
+- *Ship a native wrapper (TWA / Capacitor) so there is a real installable file.* A store listing,
+  a signing key, a review queue and a second build system, in exchange for nothing the home-screen
+  install does not already give — and Rule 9 makes the store's telemetry surface an active cost.
+
+**Consequences.**
+
+- The app is portable to any static host, at any path. That is worth more than the deploy itself.
+- Pages must be enabled once by hand (Settings → Pages → Source: GitHub Actions). Until it is, the
+  workflow's deploy step fails with a 404 from the Pages API and nothing else is wrong. This cannot
+  be automated from inside the repository, and the workflow says so at the top.
+- Pages applies no rewrite rules, so the build copies `index.html` to `404.html`. The app is
+  single-route today; a reload on any other path would otherwise 404 on the way to the router that
+  does not exist yet.
+- The service worker's precache list is still hand-maintained — Phase 8's build-generated manifest
+  is still owed, and is now the only remaining piece of "PWA polish" that this did not cover.
+- One caching subtlety is now load-bearing: the worker keys its shell entries by absolute URL, so a
+  deployment that moves the app to a different path leaves the old entries stranded under the old
+  scope. They are unreachable rather than wrong, and the `CACHE` version bump that any real change
+  to the shell already requires clears them.
