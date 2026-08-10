@@ -1055,3 +1055,48 @@ Comparison is lexicographic on `order`, like every other comparison of that fiel
   "deepest" when he means "where I stopped". Noted as a revisit trigger: the alternative is the
   **latest** dwelled block by timestamp rather than the deepest by order, and the data to switch
   is already in the store.
+
+---
+
+## ADR-0027 — The margin bar marks revision, not arrival
+
+**Status:** accepted · refines ADR-0005 and ADR-0006 for the case they did not name
+
+**Context.** ADR-0005 puts a margin bar on each block with opacity for recency and saturation for
+revision count, and ADR-0006 computes the opacity purely from `updatedAt`. Neither says what
+happens the moment after an import. Import (ADR-0014, ADR-0003) writes every block with
+`updatedAt` set to the import time, so a bar keyed on `updatedAt` alone lights the **entire
+document** at full opacity the instant it is brought in, then fades it uniformly over a week.
+
+That is not what requirement 2 asks for. "Make edited lines identifiable at a glance" is a
+question about where the *writer worked*, and an import is not the writer working — it is the same
+distinction the "last edited" resume destination already draws, and draws with the same data. A
+document that is uniformly lit conveys exactly as much as one that is uniformly dark.
+
+**Decision.** The margin bar is drawn only for blocks with `revisionCount > 0`. Opacity still
+comes from `updatedAt` decayed in ADR-0006's bands; saturation still comes from `revisionCount`.
+A never-revised block — every block just after an import, and the tail half of a paragraph split
+in the middle — carries no bar. `markIntensity` returns `null` for it, so the minimap scores it
+zero and the row draws nothing, with no caller having to re-decide the question.
+
+This is the same filter, for the same reason, as `lastEdited` in the resume strip
+(`src/features/resume/destinations.ts`): `revisionCount > 0` is what separates two thousand blocks
+that arrived together from the handful the writer has actually changed.
+
+**Alternatives considered.**
+
+- *Key the bar on `updatedAt` alone, as ADR-0006 literally reads.* Lights the whole document
+  after import; the feature conveys nothing until a week has passed.
+- *Suppress the bar for a grace period after an import.* A time-based special-case with a
+  threshold to guess, papering over the real distinction, which is revision not recency.
+- *Record an "imported" flag per block and exclude it.* New stored state for something already
+  answered by a field the fold maintains.
+
+**Consequences.**
+
+- After an import the document is a clean slate; bars appear only as the writer revises.
+- A brand-new paragraph typed by the writer is marked as soon as its first commit lands, because
+  that commit is an `update` (ADR-0004's idle commit), which increments `revisionCount`.
+- The tail of a mid-paragraph split is a fresh block at `revisionCount 0` and so is briefly
+  unmarked until edited. Defensible: that text is existing prose relocated, not new writing.
+- The minimap inherits the rule for free, because it shades from the same `markIntensity`.
