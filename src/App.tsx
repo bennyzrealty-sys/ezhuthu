@@ -27,6 +27,7 @@ import { pruneSignals } from './signals/queries';
 import { SnapshotScheduler } from './features/timelapse/snapshotting';
 import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
 import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
+import { canUndo, undoLast } from './features/undo/apply';
 import {
   DEFAULT_FEEDBACK,
   hapticsSupported,
@@ -93,6 +94,7 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [searching, setSearching] = useState(false);
   const [timelapsing, setTimelapsing] = useState(false);
+  const [undoable, setUndoable] = useState(false);
   const [bookmarking, setBookmarking] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
   /*
@@ -150,10 +152,46 @@ export default function App() {
     };
   }, []);
 
+  /*
+   * Whether undo has anything to reach for. Re-asked after every change rather
+   * than tracked in memory, because the answer lives in the log and a stack
+   * held in a component would be wrong the moment a second tab wrote to the
+   * same document (ADR-0033).
+   */
+  const refreshUndo = useCallback(() => {
+    canUndo(db, DOC_ID)
+      .then(setUndoable)
+      .catch(() => setUndoable(false));
+  }, []);
+
+  useEffect(refreshUndo, [refreshUndo]);
+
   const onDocumentChange = useCallback(() => {
     refresh();
+    refreshUndo();
     snapshots.current?.request();
-  }, [refresh]);
+  }, [refresh, refreshUndo]);
+
+  const onUndo = useCallback(() => {
+    undoLast(db, DOC_ID)
+      .then((outcome) => {
+        if (outcome.refused === 'not-reversible') {
+          setMessage('That change cannot be undone.');
+          return;
+        }
+        if (outcome.undone === 0) {
+          setMessage('Nothing left to undo in this session.');
+          return;
+        }
+        setMessage(null);
+        // The change was appended from here, so the document view is holding a
+        // copy that predates it.
+        view.current?.reload();
+        refresh();
+        refreshUndo();
+      })
+      .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+  }, [refresh, refreshUndo]);
 
   /*
    * Signals older than the retention window have no reader — the queries ask
@@ -301,6 +339,14 @@ export default function App() {
           data-testid="search-toggle"
         >
           {searching ? 'Close search' : 'Search'}
+        </button>
+        <button
+          onClick={onUndo}
+          disabled={!undoable || busy !== null}
+          data-testid="undo"
+          title="Undo the last change made in this session"
+        >
+          Undo
         </button>
         <button
           onClick={() => {
