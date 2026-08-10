@@ -16,15 +16,24 @@
 
 const CACHE = 'ezhuthu-shell-v1';
 
+// Every shell URL is resolved against the registration scope rather than
+// written as an origin-absolute path: the app is served from /<repo>/ on a
+// GitHub Pages project site and from / everywhere else, and the worker is
+// copied verbatim into the build, so it cannot be told which at build time.
+// `scope` already ends in a slash. See ADR-0034.
+const scoped = (path) => new URL(path, self.registration.scope).href;
+
+const SHELL_INDEX = scoped('index.html');
+
 // The font is precached rather than left to the runtime cache below: it is on
 // the first-paint path with `font-display: block` (src/ui/fonts.css), so a
 // cold offline open that has to wait for it shows an empty page (ADR-0019).
 const SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/icons/icon.svg',
-  '/fonts/manjari-regular.woff2',
+  self.registration.scope,
+  SHELL_INDEX,
+  scoped('manifest.webmanifest'),
+  scoped('icons/icon.svg'),
+  scoped('fonts/manjari-regular.woff2'),
 ];
 
 self.addEventListener('install', (event) => {
@@ -57,7 +66,7 @@ self.addEventListener('fetch', (event) => {
   // Navigations: cache-first on the shell, so a cold offline open works.
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/index.html').then((cached) => cached ?? fetch(request)),
+      caches.match(SHELL_INDEX).then((cached) => cached ?? fetch(request)),
     );
     return;
   }
