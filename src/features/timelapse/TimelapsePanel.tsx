@@ -189,23 +189,36 @@ export function TimelapsePanel({ docId, onClose }: TimelapsePanelProps) {
       ) : (
         <>
           <div className="timelapse-scrub">
-            <input
-              type="range"
-              min={0}
-              max={timeline.stops.length - 1}
-              step={1}
-              value={index}
-              data-testid="timelapse-slider"
-              aria-label="Point in history"
-              aria-valuetext={label}
-              onChange={(e) => setIndex(Number(e.target.value))}
-            />
+            {/*
+              * No slider for a single stop. An imported document has exactly
+              * one moment in its history — the import — so the control would
+              * render with min === max, look draggable, and do nothing. An
+              * empty button is worse than an absent one, and a dead slider is
+              * worse than either: it invites the gesture before refusing it.
+              */}
+            {timeline.stops.length > 1 ? (
+              <input
+                type="range"
+                min={0}
+                max={timeline.stops.length - 1}
+                step={1}
+                value={index}
+                data-testid="timelapse-slider"
+                aria-label="Point in history"
+                aria-valuetext={label}
+                onChange={(e) => setIndex(Number(e.target.value))}
+              />
+            ) : (
+              <p className="note timelapse-single" data-testid="timelapse-single">
+                One moment so far. Revise a paragraph and there will be somewhere to drag to.
+              </p>
+            )}
             <span className="timelapse-label" data-testid="timelapse-label" aria-live="polite">
               {label}
             </span>
             <span className="timelapse-position">
               {index + 1}/{timeline.stops.length}
-              {atPresent && ' · now'}
+              {atPresent && timeline.stops.length > 1 && ' · now'}
             </span>
           </div>
 

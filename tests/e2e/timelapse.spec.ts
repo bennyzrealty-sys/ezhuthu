@@ -120,6 +120,18 @@ test('does not touch the document behind it', async ({ page }) => {
     .toBe(eventsBefore);
 });
 
+test('offers no slider until there is somewhere to drag to', async ({ page }) => {
+  // An import is one instant, so a freshly imported document has exactly one
+  // stop. A range input with min === max looks draggable and is not.
+  await importCorpus(page, SMALL_DOC);
+  await page.getByTestId('timelapse-toggle').click();
+
+  await expect(page.getByTestId('timelapse-single')).toBeVisible();
+  await expect(page.getByTestId('timelapse-slider')).toHaveCount(0);
+  // ...and the document at that one moment is still shown.
+  await expect(page.getByTestId('timelapse-doc')).toContainText('ഒന്നാം');
+});
+
 test('says so when there is no history to show', async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('timelapse-toggle').click();

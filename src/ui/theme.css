@@ -564,3 +564,10 @@ mark,
   margin: 0;
   font-size: 0.8rem;
 }
+
+/* The single-stop case: no slider, so the row keeps its height from the text. */
+.timelapse-single {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.5rem 0;
+}
