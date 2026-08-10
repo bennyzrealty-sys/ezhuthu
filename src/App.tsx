@@ -23,6 +23,7 @@ import {
 } from './db/persistence';
 import { pruneSignals } from './signals/queries';
 import { SnapshotScheduler } from './features/timelapse/snapshotting';
+import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -81,6 +82,7 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [searching, setSearching] = useState(false);
+  const [timelapsing, setTimelapsing] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const view = useRef<DocumentViewHandle | null>(null);
 
@@ -227,6 +229,13 @@ export default function App() {
         >
           {searching ? 'Close search' : 'Search'}
         </button>
+        <button
+          onClick={() => setTimelapsing(true)}
+          disabled={busy !== null}
+          data-testid="timelapse-toggle"
+        >
+          Time-lapse
+        </button>
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
         </button>
@@ -307,6 +316,13 @@ export default function App() {
       )}
 
       <DocumentView ref={view} key={reloadKey} db={db} docId={DOC_ID} onChange={onDocumentChange} />
+
+      {/*
+        * Mounted only while open, so the Worker exists only while it is being
+        * used and the document behind it is untouched — the panel is a reader
+        * of history, not a mode the editor enters.
+        */}
+      {timelapsing && <TimelapsePanel docId={DOC_ID} onClose={() => setTimelapsing(false)} />}
     </div>
   );
 }

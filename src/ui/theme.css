@@ -456,3 +456,111 @@ mark,
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------------------
+   Time-lapse (ADR-0009)
+   --------------------------------------------------------------------------- */
+
+/*
+ * Covers the document rather than sitting beside it. The panel shows the same
+ * paragraphs at a different moment, and two versions of one passage side by
+ * side at this measure would be two columns of forty characters each.
+ */
+.timelapse-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.timelapse-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.timelapse-bar .spacer {
+  flex: 1;
+}
+
+.timelapse-scrub {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.timelapse-scrub input[type='range'] {
+  grid-column: 1 / -1;
+  width: 100%;
+  /* A thumb dragged by a thumb. The default is under 20px on Android. */
+  min-height: 2.75rem;
+  accent-color: var(--accent);
+}
+
+.timelapse-label {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.timelapse-position {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.timelapse-doc {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.5rem 1rem;
+  max-width: var(--measure);
+  width: 100%;
+  margin: 0 auto;
+}
+
+/*
+ * Deliberately NOT .block-row. The metrics match, because the same text at a
+ * different size reads as a different paragraph — but this one is not a button,
+ * has no caret and accepts no tap, and it says so by being dimmed a little
+ * rather than by refusing a gesture the reader already made.
+ */
+.past-row {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.35rem 0;
+  font-family: 'Manjari', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.timelapse-paging {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.timelapse-paging .note {
+  margin: 0;
+  font-size: 0.8rem;
+}
