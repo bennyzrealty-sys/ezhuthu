@@ -22,6 +22,7 @@ import {
   type PersistenceState,
 } from './db/persistence';
 import { pruneSignals } from './signals/queries';
+import { SnapshotScheduler } from './features/timelapse/snapshotting';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -106,6 +107,31 @@ export default function App() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  /*
+   * Anchors for the time-lapse scrub (ADR-0009). Asked for after every
+   * committed change and written from idle, at most one at a time; the
+   * scheduler decides that nothing is due, which is the answer on all but every
+   * five-hundredth commit.
+   *
+   * Not in the append transaction, deliberately. A snapshot is disposable —
+   * losing one costs a slower scrub and never data — so it must not be able to
+   * fail or slow a write of real work.
+   */
+  const snapshots = useRef<SnapshotScheduler | null>(null);
+  useEffect(() => {
+    const scheduler = new SnapshotScheduler(db, DOC_ID);
+    snapshots.current = scheduler;
+    return () => {
+      scheduler.stop();
+      snapshots.current = null;
+    };
+  }, []);
+
+  const onDocumentChange = useCallback(() => {
+    refresh();
+    snapshots.current?.request();
+  }, [refresh]);
 
   /*
    * Signals older than the retention window have no reader — the queries ask
@@ -280,7 +306,7 @@ export default function App() {
         />
       )}
 
-      <DocumentView ref={view} key={reloadKey} db={db} docId={DOC_ID} onChange={refresh} />
+      <DocumentView ref={view} key={reloadKey} db={db} docId={DOC_ID} onChange={onDocumentChange} />
     </div>
   );
 }
