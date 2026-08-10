@@ -67,6 +67,9 @@ These are enforced by `tests/perf`, not vibes. See the measured numbers under
 | Keystroke to paint | < 16 ms |
 | Memory, 100k-word document | < 150 MB |
 | Search, whole document | < 250 ms scan |
+| Time-lapse, open and materialise | < 2 s |
+| Time-lapse, one scrub step | < 400 ms |
+| Corpus export, whole log | < 5 s |
 
 Typecheck, unit tests, build and e2e run in CI on every pull request. The perf suite runs locally
 only — shared CI runners have noisy CPU, and a budget that fails at random teaches everyone to
@@ -100,7 +103,7 @@ of every working session. Read it first if you are picking this up cold.
 | 4 | Signals — attention telemetry | **done** |
 | 5 | Resume — the four-destination strip | not started |
 | 6 | Visibility — margin bar, decay, minimap, haptics, ghost markers | not started |
-| 7 | Time-lapse + export — scrub UI, edit corpus | not started |
+| 7 | Time-lapse + export — scrub UI, edit corpus | **done** |
 | 8 | PWA polish — install flow, offline verification | not started |
 
 ## Your data is yours
