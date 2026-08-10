@@ -3,20 +3,33 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-09 · end of Phase 4
+**Last updated:** 2026-08-10 · end of Phase 7
 
 ---
 
 ## Where the project is
 
-**Phases 1, 2, 3 and 4 complete.** The event log and its durability layer work, there is a working
-editor on top of them, the document renders in a bundled Malayalam face that shapes correctly,
-search finds words the reader can see anywhere in a 1,563-block document, and the app now measures
-where attention actually was.
+**Phases 1, 2, 3, 4 and 7 complete.** The event log and its durability layer work, there is a
+working editor on top of them, the document renders in a bundled Malayalam face that shapes
+correctly, search finds words the reader can see anywhere in a 1,563-block document, the app
+measures where attention actually was — and history is now readable: a scrub that materialises any
+past state, and an export of the accumulated (before, after) pairs.
 
-**Phases 1-3 are merged to `main`** (PRs #1 and #2). Phase 4 is on
-`claude/ezhuthu-phase4-signals-ivf2aj`. Start Phase 5 from a fresh branch off whatever has landed
-on `main`:
+**Phases 1-4 are merged to `main`** (PRs #1-#3). Three phases are open:
+
+| PR | Phase | Branch | Based on |
+|---|---|---|---|
+| #4 | 5 — Resume | `claude/ezhuthu-phase5-resume` | `main` |
+| #5 | 6 — Visibility | `claude/continue-previous-6smqet` | the Phase 5 branch (stacked) |
+| this one | 7 — Time-lapse + corpus | `claude/ezhuthu-phase7-timelapse-corpus-g7gxpg` | `main` |
+
+**Phase 7 is independent of 5 and 6** and was deliberately branched from `main` rather than
+stacked, so it reviews and merges on its own. It takes ADR numbers **0029-0031**, leaving
+0026-0028 to the two open branches; the numbering is contiguous once all three land. The three
+branches touch almost disjoint files — the overlap is `App.tsx` (a toolbar button and a panel
+mount) and `theme.css` (appended blocks), and both will conflict textually and not semantically.
+
+Start the next phase from a fresh branch off whatever has landed on `main`:
 
 ```bash
 git fetch origin main && git checkout -B <new-branch> origin/main
@@ -59,70 +72,142 @@ virtualiser to a result and marks it.
 - Every tunable is a named constant in `constants.ts`, which is the module ADR-0017 says to come
   back to.
 
+**Time-lapse and the edit corpus (Phase 7).** Both are batch operations and both say so.
+
+- **The scrub** (`src/features/timelapse/`) — a slider over *stops*, a Worker that materialises
+  the document at one, and a panel that shows a window of it. The Worker keeps the state and hands
+  back a summary plus a window of blocks, so history costs the main thread what the present costs
+  it (ADR-0029). Materialisation is coalesced — one replay in flight, one waiting, intermediate
+  drag positions dropped.
+- **Stops** (`timeline.ts`) — pure, time injected. One per *instant*: events written in one
+  transaction share a `ts`, so an import is one stop rather than 1,563. Thinned to a cap,
+  preferring session ends.
+- **Anchors** (`snapshotting.ts`) — `maybeWriteSnapshot` finally has a caller. Debounced past the
+  writer's last commit, then run from idle. Both gates are needed; see the traps.
+- **The corpus** (`src/features/io/corpus/`) — `pairs.ts` walks each block's history and derives
+  `before` from the previous event (ADR-0012), `triviality.ts` drops what is not a revision
+  (ADR-0030), `export.ts` walks the whole log in ONE cursor over `[docId+blockId+seq]` and emits
+  JSONL. Thresholds are all in `constants.ts`.
+- **Cluster edit distance** (`src/text/distance.ts`) — banded, with an early exit, over folded
+  grapheme clusters. What makes the triviality filter mean the same thing in Malayalam and in
+  English.
+
 **Nothing in the UI consumes signals yet.** That is Phase 5. The store fills; no button appeared.
 
-**Tests: 231 unit + 29 e2e + 6 perf, all passing.**
+**Tests: 329 unit + 39 e2e + 8 perf, all passing.**
 
 ## Measured performance
 
 Against the 80,022-word / 1,563-block synthetic Malayalam corpus, in this container, perf suite
 serial. Ranges are across three runs.
 
-| Metric | Budget | Phase 4 | Phase 3 |
+| Metric | Budget | Phase 7 | Phase 4 |
 |---|---|---|---|
-| Cold open | < 1.5 s | **151–174 ms** | 138–163 ms |
-| Keystroke handler | < 16 ms | **0.79–0.93 ms median, 1.08–1.41 ms p95** | 0.83–0.92 ms median, 1.28 ms p95 |
-| Frame interval while typing | < 33 ms p95 | **16.9–17.0 ms** | 16.9–20.2 ms |
-| Scroll frame interval | < 33 ms p95 | **17.1–17.3 ms p95** | 17.0–17.3 ms p95 |
-| Memory after full scroll | < 150 MB | **3.8–4.0 MB** | 3.6–3.7 MB |
-| Search, whole-document miss | < 250 ms scan | **71–79 ms** | 83–94 ms |
-| Search, 1,064 matches | < 250 ms scan | **91–93 ms** | 116–120 ms |
+| Cold open | < 1.5 s | **164–217 ms** | 151–174 ms |
+| Keystroke handler | < 16 ms | **0.94–1.06 ms median, 1.22–1.50 ms p95** | 0.79–0.93 / 1.08–1.41 |
+| Frame interval while typing | < 33 ms p95 | **16.9–17.2 ms** | 16.9–17.0 ms |
+| Scroll frame interval | < 33 ms p95 | **17.4–17.6 ms p95** | 17.1–17.3 ms p95 |
+| Memory after full scroll | < 150 MB | **3.8 MB** | 3.8–4.0 MB |
+| Search, whole-document miss | < 250 ms scan | **87–110 ms** | 71–79 ms |
+| Search, 1,064 matches | < 250 ms scan | **113–122 ms** | 91–93 ms |
+| Time-lapse, open + materialise | < 2 s | **180–191 ms** | — |
+| Time-lapse, scrub to earliest stop | < 400 ms | **74–83 ms** | — |
+| Corpus export, 1,563 blocks | < 5 s | **77–78 ms** | — |
 | Blocks in DOM | — | **12** of 1,563 | 12 |
 
-**Signals cost nothing measurable**, which is the result the phase was watching for: this is the
-first feature that competes with typing. What the keystroke handler gained is two map lookups and
-a subtraction; everything else is on a 1 s timer or a 2 s flush.
+**Every pre-existing path reads a little slower than the Phase 4 column, including cold open and
+search, which this phase does not touch.** That is a different container, not a regression. Do not
+compare across sessions without a same-machine baseline: keystroke was checked directly against
+`main` for exactly this reason and came out at 0.94–1.06 ms here against 1.00–1.12 ms there.
+
+**That check found a real regression once**, and it is the only one this phase had — see the
+snapshot trap below.
 
 ## What does not work yet
 
-- **No resume strip, margin bar, minimap, ghost markers, time-lapse or corpus export.** Phases
-  5-7. Nothing is stubbed — an empty button is worse than an absent one.
-- **Nothing reads the signals.** `queries.ts` has the aggregations Phase 5 needs and no caller.
-  The `scrollback` signal has no consumer at all until Phase 6's auto-bookmarks.
-- **The ADR-0017 constants have never been revisited against real use.** 60 s, 1 s, the 2 s
-  scroll-back dwell and the 2 s hesitation floor are all guesses. They are in one module for
-  exactly this reason.
-- **Signals are flushed on `visibilitychange` only**, not `pagehide`. On the platforms that matter
-  this fires before freeze; if a device is found where it does not, that is where to look for
-  missing telemetry.
+- **No resume strip, margin bar, minimap or ghost markers.** Phases 5 and 6, both open as PRs and
+  not on this branch.
+- **Nothing reads the signals on this branch.** `queries.ts` still has no caller here; Phase 5
+  adds one.
+- **The time-lapse panel cannot restore a past state**, deliberately (ADR-0029). It reads.
+- **The scrub shows no diff.** Which paragraphs changed between two stops is the obvious next
+  question and would cost a second materialisation; nothing is stubbed for it.
+- **The corpus thresholds have never been run against a real manuscript.** `TRIVIAL_MAX_RATIO` is
+  the weakest: it is proportional, so the same one-word swap survives in a sentence and is dropped
+  inside a page. They are all in one module and re-runnable over full history, which is the whole
+  point of filtering at export (ADR-0012).
+- **The corpus is built in memory and handed over as one string.** Bounded by revisions, not by
+  document size, and 77 ms over the corpus — but a manuscript with a hundred thousand revisions
+  would want a stream.
+- **The replay Worker chunk is not precached.** The service worker's asset list is hand-maintained
+  (Phase 8), so a first offline open cannot start the Worker; opening time-lapse once online
+  caches it through the runtime handler.
+- **The ADR-0017 constants have never been revisited against real use**, and neither have
+  `SESSION_GAP_MS` or `QUIET_AFTER_COMMIT_MS`.
+- **Signals are flushed on `visibilitychange` only**, not `pagehide`.
 - **Noto Sans Malayalam is not bundled and the optional-download flow is not built.** ADR-0019
   offers it; `scripts/subset-fonts.sh` will subset it if the TTF is dropped into `vendor/fonts`.
-  Manjari Bold is in the same position.
-- **Search has no replace, no regex and no ranking** (ADR-0015 puts ranking out of scope), and
-  results cap at 100 paragraphs with an honest count past the cap.
-- **No cross-block selection**, by design (ADR-0011). Of the three mitigations named there,
-  in-app search now exists; **range-select mode and the copy affordances do not.**
-- **Deleted blocks are dropped from the index**, so merging two blocks leaves a soft-deleted
-  record with no seam rendered. Ghost markers are Phase 6; the data is already there.
+- **Search has no replace, no regex and no ranking**, and results cap at 100 paragraphs with an
+  honest count past the cap.
+- **No cross-block selection**, by design (ADR-0011). **Range-select mode and the copy affordances
+  do not exist.**
 - **Service worker asset list is hand-maintained.**
 - **`memory` perf test needs cross-origin isolation**, supplied by `vite.config.ts`
   `preview.headers`. It will silently skip if those headers are ever removed.
 
 ## The next three tasks
 
-1. **Resume** (Phase 5). The four-destination strip, fixed order, preference learned as the
-   pre-selected default with a five-pick floor (ADR-0023). Three of the four destinations are
-   queries that already exist: last edited from the log, longest dwelled and last read from
-   `signals/queries.ts`, most rewritten from `Block.revisionCount`.
+1. **Land Phases 5 and 6.** Both are open, both are CI-green, and #5 is stacked on #4. Merge
+   order is #4, then #5, then this one — or this one at any point, since it is off `main`. Expect
+   textual conflicts in `App.tsx` and `theme.css` only.
 
-2. **Visibility** (Phase 6). Margin bar, time decay, the bucketed minimap (ADR-0021), ghost
-   markers (ADR-0018), and the scroll-back auto-bookmarks that Phase 4 is already recording.
-
-3. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
+2. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
    mitigation is still outstanding. Whole-block granularity by tap and extend; copy block, copy
    range, copy document.
 
+3. **Phase 8 — PWA polish.** A build-generated precache manifest, which the replay Worker chunk
+   now needs as well as the shell; the install flow; and offline verification tests.
+
 ## Traps a fresh session will fall into
+
+**"From idle" is not the same as "when the writer has stopped".** The gap between two keystrokes
+IS idle, and `requestIdleCallback` will happily hand it to you. Phase 7 wired
+`maybeWriteSnapshot` to fire from idle after a commit, and the perf suite caught the keystroke
+handler going from 0.95 ms to 1.13–1.21 ms on the same machine: the editor commits every 400 ms
+while typing, the first commit on a log past `SNAPSHOT_INTERVAL` finds a snapshot due, and idle
+duly offered it the space before the next keystroke to materialise 1,563 blocks in. There are two
+gates now — a debounce for *whether* the writer has finished, idle for *when* inside the quiet
+period. Anything else that materialises the document from idle needs both.
+
+**`Dexie.minKey` is not a valid low bound inside a compound key range.** It is `-Infinity`, and
+`between([docId, minKey, minKey], …)` throws `DataError` at the store rather than matching
+everything — identically in the browser and under fake-indexeddb. Existing two-part ranges use it
+and work; a three-part one does not. Use a real low key (`''` for a blockId, `0` for a seq).
+
+**A `download` attribute containing any non-ASCII character is discarded whole**, and the file
+arrives called `download` with no extension. `നോവൽ` and `café` fail identically. This is why
+`fileNameStem` is ASCII-only (ADR-0031) and it is NOT a general rule about text — everything
+inside the files is Malayalam. Widening that keep-set back is a one-line change that silently
+breaks backups.
+
+**Revoking an object URL on the line after `a.click()` races the download**, and a detached anchor
+does not reliably carry its `download` attribute. Both are in `src/ui/download.ts`, both were
+found by an e2e test that looked like a broken export button.
+
+**The scrub's slider addresses instants, not events.** Events written in one transaction share a
+`ts`. Count events instead and an import gives the slider one position on a small document and a
+whole travel inside a paste on a large one — the feature appears broken on the commonest way of
+getting a document into the app.
+
+**A window from the Worker can arrive for a state the panel has left.** The Worker holds exactly
+one materialised state, so every window reply carries the seq it was taken from and the caller
+compares. Drop that check and yesterday's paragraphs render under today's date, occasionally, on a
+fast drag.
+
+**Do not compare perf numbers across sessions.** Every pre-existing budget in this phase's table
+reads slower than Phase 4's, including paths the phase does not touch. Different container. If a
+number looks like a regression, get a same-machine baseline off `main` before believing it — and
+then believe it, because that is how the snapshot trap above was found.
 
 **Do not read something asynchronous once and assert on it.** This has now bitten three tests in
 three phases, and it is always the same shape: a row renders before its text arrives, the toolbar
@@ -235,7 +320,8 @@ through `setImmediate`. Fake `setTimeout`/`clearTimeout` only.
 
 ## Decisions already made — do not relitigate
 
-All 25 are in `DECISIONS.md`. The fourteen that departed from the original brief:
+All 28 on this branch are in `DECISIONS.md` — 0026-0028 belong to the open Phase 5 and Phase 6
+branches and are not here. The seventeen that departed from the original brief:
 
 | ADR | Departure |
 |---|---|
@@ -254,6 +340,9 @@ All 25 are in `DECISIONS.md`. The fourteen that departed from the original brief
 | 0023 | Resume strip order fixed; preference learned as default, not layout |
 | 0024 | The subsetter's defaults were never the danger; the guarantee moves to the output |
 | 0025 | Dwell is sampled on a timer; no `IntersectionObserver` |
+| 0029 | The scrub's Worker keeps the state; only windows cross, and drags are coalesced |
+| 0030 | A revision is a change to prose that already existed — deletions and composition are not |
+| 0031 | File names handed to the browser are ASCII; the timestamp identifies the file |
 
 ## Corrections made so far
 
@@ -319,6 +408,24 @@ is the slower — it walks the log to check the projection — so its result lan
 bounded-window test read the toolbar's block count before the status load finished and asserted on
 `0`. Both predate this phase and both surfaced under Phase 4's extra mount-time render. Fixed by
 waiting for the value rather than snapshotting it.
+
+**Phase 7 — "call it from idle" (ADR-0009) was not sufficient.** The instruction was right and
+incomplete: idle includes the gap between two keystrokes. Measured, fixed with a debounce, and
+recorded above as a trap. ADR-0009 is not amended — the decision it records is unchanged — but
+`docs/PERFORMANCE.md`'s rules now say that idle work waits for the writer to stop.
+
+**Phase 7 — the backup file name was stripping Malayalam, and then the fix was wrong too.** The
+sanitiser's keep-set omitted `\p{M}`, so combining marks were replaced with dashes and
+`എന്റെ നോവൽ` became `എന-റ-ന-വൽ`; the test asserted only that *some* Malayalam survived, which is
+exactly what a stripped-mark title does. Widening the keep-set fixed that and left a worse bug in
+place: the browser discards a non-ASCII `download` value entirely and saves the file as
+`download`. ADR-0031 settles it at the right layer. Two lessons, both cheap: assert the whole
+value, and check what the platform does with the string rather than what the string looks like.
+
+**Phase 7 — the first timeline counted events.** Stops were placed every hundred events and at
+session ends, which gave a three-paragraph document exactly one position and a real import a
+slider whose whole travel was inside the paste. Both are the same error — counting events rather
+than moments — and the first e2e test found it immediately.
 
 ## Conventions
 
