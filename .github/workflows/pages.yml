@@ -1,0 +1,61 @@
+name: Pages
+
+# Publishes the app to a GitHub Pages project site, which is what makes it
+# installable on a phone: a PWA has no APK and no store listing, so the only
+# way onto a home screen is a URL served over HTTPS. See ADR-0034.
+#
+# Requires Pages to be enabled once, with the source set to "GitHub Actions"
+# (Settings → Pages). Until that is done this workflow fails at the deploy
+# step with a 404 from the Pages API; nothing else is wrong.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Do not cancel a deploy in flight — a half-published site is worse than a
+# slightly stale one. Queue instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # A project site is served from /<repo>/, so the build needs to know
+      # its base. `github.event.repository.name` keeps this correct if the
+      # repository is ever renamed.
+      - run: npm run build
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+      # Pages serves static files with no rewrite rule, so a reload on any
+      # path other than the root would 404. The app is single-route today;
+      # this keeps that from becoming a trap later.
+      - run: cp dist/index.html dist/404.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
