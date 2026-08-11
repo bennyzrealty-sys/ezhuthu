@@ -35,6 +35,7 @@ import {
   saveFeedback,
   type FeedbackSettings,
 } from './features/visibility/feedback';
+import { useInstall } from './pwa/useInstall';
 import type { Doc } from './db/types';
 
 const DOC_ID = 'primary';
@@ -97,6 +98,7 @@ export default function App() {
   const [undoable, setUndoable] = useState(false);
   const [bookmarking, setBookmarking] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
+  const { availability: installable, promptInstall } = useInstall();
   /*
    * The strip is an opening offer, not a panel. It is shown once per launch —
    * requirement 1 is "on open, return the writer to where he was working" — and
@@ -311,6 +313,20 @@ export default function App() {
       });
   }, [refresh]);
 
+  /*
+   * The prompt must be fired from the gesture, which is why this is a click
+   * handler and not something the app does when it notices it could.
+   */
+  const onInstall = useCallback(() => {
+    void promptInstall().then((outcome) => {
+      if (outcome === 'dismissed') {
+        // The deferred event is spent either way, so the button has gone. Say
+        // where the install still lives rather than leaving a dead end.
+        setMessage('Not installed. Your browser menu can still add it to the home screen.');
+      }
+    });
+  }, [promptInstall]);
+
   return (
     <div className="doc-layout">
       <div className="doc-toolbar">
@@ -328,6 +344,15 @@ export default function App() {
           >
             backup {status.backup.urgency}
           </span>
+        )}
+        {installable === 'promptable' && (
+          <button
+            onClick={onInstall}
+            data-testid="install"
+            title="Add എഴുത്ത് to the home screen — an installed app is much less likely to have its storage evicted"
+          >
+            Install
+          </button>
         )}
         <button
           onClick={() => {
@@ -419,6 +444,15 @@ export default function App() {
                 </dd>
               </div>
               <div className="row">
+                <dt>Home screen</dt>
+                <dd
+                  className={installable === 'installed' ? 'state-ok' : 'state-warn'}
+                  data-testid="install-state"
+                >
+                  {installable === 'installed' ? 'installed' : 'running in a browser tab'}
+                </dd>
+              </div>
+              <div className="row">
                 <dt>Used</dt>
                 <dd>{status.usageMb === null ? 'unknown' : `${status.usageMb.toFixed(1)} MB`}</dd>
               </div>
@@ -435,6 +469,12 @@ export default function App() {
               <p className="note">
                 The browser has not promised to keep this data. Installing to the home screen
                 improves the odds, but a backup is the only thing that survives eviction.
+              </p>
+            )}
+            {installable === 'manual' && (
+              <p className="note" data-testid="install-hint">
+                This browser offers no install button to put behind one of ours. On iOS: Share, then
+                Add to Home Screen. Elsewhere, look for Install app in the browser menu.
               </p>
             )}
           </section>
