@@ -503,6 +503,50 @@ export function DocumentView({
     [db, docId, onChange],
   );
 
+  /**
+   * Add a paragraph at the end and put the caret in it.
+   *
+   * This is how writing *starts*. The editor opens by tapping an existing
+   * paragraph (BlockRow), which a fresh install does not have — so before this
+   * existed, an empty document could only be filled by importing a file, and
+   * the answer to "let me write something" was that there was nowhere to put
+   * it. Found on a real phone, five minutes after the first install.
+   *
+   * An already-empty last paragraph is focused rather than followed by a
+   * second one. Two taps on the affordance are one intention, and the log is
+   * permanent (rule 1): a paragraph the writer never typed in should not be an
+   * event, let alone two.
+   */
+  const appendParagraph = useCallback(async () => {
+    const last = index[index.length - 1];
+    if (last !== undefined && last.length === 0) {
+      setFocus({ blockId: last.blockId, caret: 0 });
+      return;
+    }
+
+    // No `afterBlockId` — append at the end (core/events.ts). The order key it
+    // is given sorts after every existing one, so appending to the index here
+    // agrees with what a reload would produce.
+    const event = await insertBlock(db, docId, '');
+    const created = await db.blocks.get(event.blockId);
+    if (created === undefined) return;
+
+    setTexts((previous) => new Map(previous).set(created.blockId, ''));
+    setIndex((previous) => [
+      ...previous,
+      {
+        blockId: created.blockId,
+        order: created.order,
+        updatedAt: created.updatedAt,
+        revisionCount: 0,
+        length: 0,
+        deleted: false,
+      },
+    ]);
+    setFocus({ blockId: created.blockId, caret: 0 });
+    onChange?.();
+  }, [db, docId, index, onChange]);
+
   const mergeBack = useCallback(
     async (blockId: string, text: string) => {
       const at = index.findIndex((e) => e.blockId === blockId);
@@ -610,7 +654,20 @@ export function DocumentView({
   }
 
   if (index.length === 0) {
-    return <div className="doc-empty">This document is empty. Import a file to begin.</div>;
+    return (
+      <div className="doc-empty">
+        <p>This document is empty.</p>
+        <button
+          type="button"
+          className="primary"
+          data-testid="start-writing"
+          onClick={() => void appendParagraph()}
+        >
+          Start writing
+        </button>
+        <p className="note">…or Import to bring in a .txt or .md file.</p>
+      </div>
+    );
   }
 
   return (
@@ -691,6 +748,26 @@ export function DocumentView({
             );
           })}
         </div>
+        {/*
+         * A place to write at the end of the document, outside the virtualised
+         * container so it is not an item and cannot confuse the height math.
+         * Enter at the end of the last paragraph does the same thing, but that
+         * needs a caret placed exactly at the end of a paragraph on a phone —
+         * fine as the writing gesture, useless as the way back in after a
+         * reload.
+         *
+         * A click here blurs any focused editor first, which commits it. That
+         * ordering is wanted: the paragraph being left is saved before the new
+         * one arrives.
+         */}
+        <button
+          type="button"
+          className="doc-append"
+          data-testid="append-paragraph"
+          onClick={() => void appendParagraph()}
+        >
+          + New paragraph
+        </button>
       </div>
       <Minimap blocks={index} onJump={jumpToIndex} now={now} />
     </div>

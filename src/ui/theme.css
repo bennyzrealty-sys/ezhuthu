@@ -501,6 +501,30 @@ button:disabled {
   color: var(--ink-muted);
 }
 
+/*
+ * The way in, at the end of the document. Deliberately quiet — it sits under
+ * the last paragraph for the whole life of the document, so it has to be
+ * findable without competing with the text above it. Full width and 44 px
+ * minimum (inherited from `button`) because it is a thumb target.
+ */
+.doc-append {
+  display: block;
+  width: 100%;
+  max-width: var(--measure);
+  margin: 0.5rem auto 2rem;
+  padding: 0.9rem 1rem;
+  text-align: left;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px dashed var(--rule);
+}
+
+.doc-append:hover,
+.doc-append:focus-visible {
+  color: var(--ink);
+  border-style: solid;
+}
+
 .doc-toolbar {
   position: sticky;
   top: 0;
