@@ -3,8 +3,8 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-10 · after Phase 7, plus deployment (ADR-0034) on
-`claude/app-download-link-wnq0qn`
+**Last updated:** 2026-08-11 · Phase 8 complete; the app is live at
+**https://bennyzrealty-sys.github.io/ezhuthu/**
 
 ---
 
@@ -141,7 +141,25 @@ store listing — the only route onto a home screen is a URL.
 - Verified against a static server with the build mounted at `/ezhuthu/`: worker registered at the
   sub-path with a matching scope, five sub-path URLs precached, no 404s, offline reload renders.
 
-**Tests: 404 unit + 66 e2e + 8 perf, all passing.**
+**PWA (Phase 8).** The last phase, complete. Pages is enabled and deploys on every push to
+`main`.
+
+- **Generated precache** (`scripts/precache.ts`, ADR-0035) — every build output except `sw.js`,
+  `404.html`, maps and licences is substituted into the built worker between marker comments,
+  with a cache revision hashed from file contents. The replay Worker chunk is finally precached,
+  so time-lapse starts on a *first* offline open.
+- **Install** (`src/pwa/install.ts` + `useInstall.ts` + the toolbar button) — the button is there
+  whenever the app is not on the home screen. Where the browser hands over a deferred
+  `beforeinstallprompt` (Android Chrome), the tap fires the real install dialog; everywhere else —
+  iOS Safari, the in-app viewers links actually open in, Chromium before its engagement heuristic
+  — it opens honest per-platform steps. No user-agent sniffing anywhere: `manual` is inferred
+  from the absence of the event. The status panel says installed / running in a tab.
+- **Offline e2e** (`tests/e2e/offline.spec.ts`) — the shell precached from the build rather than a
+  list, an offline open, an offline write surviving an offline reload, time-lapse on a first
+  offline open, and the install button's honesty. These found a real worker bug on their first
+  run — the `Vary` trap below.
+
+**Tests: 430 unit + 71 e2e + 8 perf, all passing.**
 
 ## Measured performance
 
@@ -208,15 +226,10 @@ was found (see the snapshot trap below).
 - **The scroll-past visual pulse has no e2e.** Vibration can't be asserted in a headless browser
   and the pulse-on-scroll is timing-sensitive; `EditedRegionPulse` is unit-tested and the e2e
   covers the settings and their honesty. The pulse on a real scroll is manual-only.
-- **Service worker asset list is hand-maintained.** (Phase 6 needed no change — its code is in the
-  JS bundle, which is runtime-cached, not in the hand-listed shell of fonts/icons/manifest.) The
-  deploy work did not fix this; it is the last piece of Phase 8 still owed, along with the install
-  prompt and offline verification tests.
 - **Nothing verifies the sub-path build in CI.** ADR-0034's guarantee was checked by hand against a
   static server, once. A regression — a new origin-absolute path in the manifest, `sw.js` or a
   stylesheet — would ship silently and only break the deployed site, never the suites, which all
   run at the root.
-- **No e2e covers the install flow**, because Phase 8 has not built one to cover.
 
 - **The time-lapse panel cannot restore a past state**, deliberately (ADR-0029). It reads.
 - **The scrub shows no diff.** Which paragraphs changed between two stops is the obvious next
@@ -229,33 +242,22 @@ was found (see the snapshot trap below).
 - **The corpus is built in memory and handed over as one string.** Bounded by revisions, not by
   document size, and 77 ms over the corpus — but a manuscript with a hundred thousand revisions
   would want a stream.
-- **The replay Worker chunk is not precached.** The service worker's asset list is hand-maintained
-  (Phase 8), so a first offline open cannot start the Worker; opening time-lapse once online
-  caches it through the runtime handler.
 - **`memory` perf test needs cross-origin isolation**, supplied by `vite.config.ts`
   `preview.headers`. It will silently skip if those headers are ever removed.
 
-## The next four tasks
+## The next three tasks
 
-1. **Enable Pages, once, in the repository settings**, and check the deployed site on a real
-   phone. This is the only step of the deploy that cannot be done from inside the repository
-   (ADR-0034), and until someone does it the Pages workflow is a red build that means nothing is
-   wrong. A real device is also where the manual IME checklist in `docs/MALAYALAM.md` finally gets
-   run.
+1. **A real-device pass.** Install from the live URL on an actual phone (remember: a link opened
+   inside Gmail's viewer cannot install — Open in Chrome first), then write in the app for a few
+   sessions. That is what finally runs the manual IME checklist in `docs/MALAYALAM.md`, and it is
+   the only way to judge the guessed constants (task 3).
 
-2. **Phase 8 — PWA polish.** Deployment (ADR-0034) took the first bite: the app is servable and
-   installable. What remains is the build-generated precache manifest that replaces the
-   hand-maintained asset list, the in-app install prompt, and offline verification tests. The
-   generated manifest now has a second reason to exist — the replay Worker is its own chunk, so a
-   first *offline* open cannot start time-lapse until the page has been loaded online once — and a
-   third: it would precache against the base rather than a list someone has to keep in step.
-
-3. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
+2. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
    mitigation is still outstanding. Whole-block granularity by tap and extend; copy block, copy
    range, copy document. Block-granular selection composes naturally with the Phase 6 Delete
    affordance and ghost markers.
 
-4. **Revisit the guessed constants** — the four in `signals/constants.ts` (ADR-0017),
+3. **Revisit the guessed constants** — the four in `signals/constants.ts` (ADR-0017),
    `REWRITE_WINDOW_DAYS` in `features/resume/destinations.ts`, and the ADR-0006 decay bands and
    saturation curve in `features/visibility/intensity.ts`. This needs a person writing in the app
    for a few sessions; no automated run substitutes for it. A resume suggestion that feels wrong, or
@@ -278,6 +280,16 @@ reader sees is a blank space where the Malayalam should be (`font-display: block
 prompt, and no offline capability. Every suite runs at the root and every one of them passes. If
 you add a path, resolve it against `import.meta.env.BASE_URL`, or against
 `self.registration.scope` inside the worker, or make it relative in the manifest. See ADR-0034.
+
+**A response stored with a `Vary` header only matches a request whose listed headers agree with
+the ones `cache.add()` happened to send.** vite preview stamps `Vary: Origin` on every asset, and
+the page fetches its script, stylesheet and font with `crossorigin` — CORS mode, an `Origin`
+header — so every one of them missed the precache, fell through to `fetch()`, and an offline
+reload was a blank page. Deterministic, but only under servers that send such headers: GitHub
+Pages sends only `Vary: Accept-Encoding`, which is identical on both sides, so the live site never
+showed it. The worker matches with `ignoreVary: true` everywhere — the shell is same-origin static
+files, for which Vary carries no meaning. If you add a `caches.match` call, keep the option; the
+offline suite fails within seconds if you drop it.
 
 **`Dexie.minKey` is not a valid low bound inside a compound key range.** It is `-Infinity`, and
 `between([docId, minKey, minKey], …)` throws `DataError` at the store rather than matching
@@ -485,6 +497,7 @@ All 33 are in `DECISIONS.md`. The twenty-three that departed from the original b
 | 0032 | A revision is judged by the word that changed, never by the paragraph around it |
 | 0033 | Undo appends its reversal and never rewrites the log; the stack is one session |
 | 0034 | The app must be servable from a sub-path; the base is a build input, not a constant |
+| 0035 | The precache list is generated from the build and injected into the worker's bytes |
 
 ## Corrections made so far
 

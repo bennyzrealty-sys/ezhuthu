@@ -1507,3 +1507,57 @@ suites and `vercel.json` all want. Only the Pages workflow sets it.
   deployment that moves the app to a different path leaves the old entries stranded under the old
   scope. They are unreachable rather than wrong, and the `CACHE` version bump that any real change
   to the shell already requires clears them.
+
+---
+
+## ADR-0035 — The precache list is generated from the build and injected into the worker's bytes
+
+**Status:** accepted
+
+**Context.** The service worker's shell list was five paths written by hand (Phase 1, explicitly
+scaffolding), and it was already wrong in the way hand lists go wrong: the time-lapse replay
+Worker is emitted as its own chunk, nobody added it, and a first *offline* open could not start
+time-lapse at all. An allowlist makes forgetting the default. For an app whose claim is
+"offline-first", the default has to be that a build output is cached, and forgetting has to take
+effort.
+
+There is also an update problem with any list the worker *fetches*: a browser decides whether a
+new worker exists by byte-comparing the script it already has. A worker whose bytes never change
+is never reinstalled, and the shell in the cache stays whatever shipped first, forever.
+
+**Decision.** A Vite plugin (`scripts/precache.ts`) runs at `closeBundle`, after `public/` has
+been copied into the output. It lists every emitted file, drops a short named exclusion list —
+`sw.js` (a worker must not serve itself stale), `404.html` (a byte-copy of `index.html` the Pages
+workflow adds), `.map` and `.txt` — sorts, and **substitutes the list into the built copy of
+`sw.js`** between marker comments. Missing markers fail the build; the failure they prevent is a
+worker shipping with the two-entry development fallback, which installs, serves, and is only
+wrong offline.
+
+The cache name carries a revision hashed from the *contents* of every precached file, so
+`activate` drops the previous shell exactly when the shell changed — including changes to files
+whose names carry no hash (`index.html`, the manifest, the font) — and never when it did not.
+
+The pure parts (selection, revision, injection) are exported and unit-tested; one test reads the
+real `public/sw.js` so the markers cannot be edited away unnoticed.
+
+**Alternatives considered.**
+
+- *Workbox.* Solves this and much more — routing strategies, expiration, background sync — none
+  of which this worker wants (it must never touch document content, and the document never
+  crosses the network). A dependency plus generated code nobody here reads, against sixty lines
+  that are read.
+- *A side-car manifest the worker fetches.* The update problem above: `sw.js` bytes never change,
+  the browser never reinstalls, the shell freezes at whatever shipped first.
+- *Bundling the worker so it can import a generated module.* `sw.js` deliberately does not pass
+  through the bundler (Phase 1); making it do so trades a visible substitution for a build
+  pipeline's worth of indirection.
+
+**Consequences.**
+
+- A new chunk is precached by existing code rather than by someone remembering. The exclusion
+  list is the only thing left to maintain, and forgetting *it* over-caches rather than breaking
+  offline.
+- Deploys that change nothing produce a byte-identical worker (the listing is sorted, the hash
+  content-addressed), so returning readers are not made to re-fetch an unchanged shell.
+- The dev fallback block means `public/sw.js` in the repository is not what ships; the built copy
+  differs by exactly the marked block. Anyone reading the deployed worker sees the real list.

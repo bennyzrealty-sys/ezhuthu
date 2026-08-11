@@ -62,12 +62,10 @@ the phone's browser and adding it to the home screen. From then on it launches f
 its own icon and works with the network off.
 
 The repository deploys itself to GitHub Pages — `.github/workflows/pages.yml`, on every push to
-`main`. **Pages has to be enabled once by hand:** Settings → Pages → Source: *GitHub Actions*.
-Until that is done the workflow's deploy step fails with a 404 from the Pages API; the build
-above it is fine. Once enabled, the site is at:
+`main`. Pages is enabled (Settings → Pages → Source: *GitHub Actions*) and the app is live at:
 
 ```
-https://<owner>.github.io/<repo>/
+https://bennyzrealty-sys.github.io/ezhuthu/
 ```
 
 Then, on the phone:
@@ -76,6 +74,12 @@ Then, on the phone:
 - **iOS / Safari** — open the URL, Share → *Add to Home Screen*. It must be Safari; other iOS
   browsers cannot install. Installing also makes iOS much less likely to evict the database
   (ADR-0013), so it matters more here than it looks.
+- **Or use the app's own Install button**, shown in the toolbar whenever the app is not yet on
+  the home screen. On Android Chrome it opens the install dialog directly; in browsers that never
+  offer one (iOS Safari, in-app viewers) it shows these same steps.
+
+A link tapped inside Gmail, WhatsApp and the like opens in that app's own viewer, which cannot
+install anything. Use its menu — *Open in Chrome* / *Open in browser* — first.
 
 Open it once while online so the shell and the font are cached; after that it opens offline.
 
