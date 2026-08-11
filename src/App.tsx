@@ -99,6 +99,7 @@ export default function App() {
   const [bookmarking, setBookmarking] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
   const { availability: installable, promptInstall } = useInstall();
+  const [installHelp, setInstallHelp] = useState(false);
   /*
    * The strip is an opening offer, not a panel. It is shown once per launch —
    * requirement 1 is "on open, return the writer to where he was working" — and
@@ -314,18 +315,31 @@ export default function App() {
   }, [refresh]);
 
   /*
-   * The prompt must be fired from the gesture, which is why this is a click
-   * handler and not something the app does when it notices it could.
+   * One button for three platforms' worth of reality. Where the browser has
+   * handed over a deferred prompt, firing it from the click IS the one-tap
+   * install — and it must be fired from the gesture; browsers reject it from
+   * anywhere else. Everywhere else — iOS Safari, the in-app browser views
+   * links actually open in, Chromium before its engagement heuristic — no web
+   * API can install anything, so the same button opens the honest steps
+   * instead of pretending, or not existing.
    */
   const onInstall = useCallback(() => {
+    if (installable !== 'promptable') {
+      setInstallHelp((v) => !v);
+      return;
+    }
+    setInstallHelp(false);
     void promptInstall().then((outcome) => {
       if (outcome === 'dismissed') {
-        // The deferred event is spent either way, so the button has gone. Say
-        // where the install still lives rather than leaving a dead end.
-        setMessage('Not installed. Your browser menu can still add it to the home screen.');
+        // The deferred event is spent — the browser offers it once per visit —
+        // so from here the button falls back to showing the manual steps.
+        setMessage('Not installed. The Install button now shows the manual steps instead.');
+      } else if (outcome === 'unavailable') {
+        // A second tap raced the first, or the event was spent: show the steps.
+        setInstallHelp(true);
       }
     });
-  }, [promptInstall]);
+  }, [installable, promptInstall]);
 
   return (
     <div className="doc-layout">
@@ -345,10 +359,11 @@ export default function App() {
             backup {status.backup.urgency}
           </span>
         )}
-        {installable === 'promptable' && (
+        {installable !== 'installed' && (
           <button
             onClick={onInstall}
             data-testid="install"
+            aria-expanded={installHelp}
             title="Add എഴുത്ത് to the home screen — an installed app is much less likely to have its storage evicted"
           >
             Install
@@ -428,6 +443,33 @@ export default function App() {
         </p>
       )}
 
+      {installHelp && installable !== 'installed' && (
+        <div style={{ padding: '0 1rem' }}>
+          <section className="card" data-testid="install-help">
+            <h2>Add എഴുത്ത് to the home screen</h2>
+            <p className="note">
+              This browser will not hand over an install dialog, so it is done from the browser's
+              own controls:
+            </p>
+            <ul className="note">
+              <li>
+                Reading this inside another app (Gmail, WhatsApp…)? Its viewer cannot install
+                anything. Use its menu to Open in Chrome (or your browser) first, then come back to
+                this button.
+              </li>
+              <li>Android, Chrome: menu (⋮) → Add to Home screen → Install.</li>
+              <li>iPhone and iPad, Safari: Share → Add to Home Screen.</li>
+            </ul>
+            <p className="note">
+              Installed, the app opens full screen from its own icon, works with no connection, and
+              the browser is far less likely to evict its storage — which is where the manuscript
+              lives (ADR-0013).
+            </p>
+            <button onClick={() => setInstallHelp(false)}>Close</button>
+          </section>
+        </div>
+      )}
+
       {showStatus && status !== null && (
         <div style={{ padding: '0 1rem' }}>
           <section className="card">
@@ -473,8 +515,9 @@ export default function App() {
             )}
             {installable === 'manual' && (
               <p className="note" data-testid="install-hint">
-                This browser offers no install button to put behind one of ours. On iOS: Share, then
-                Add to Home Screen. Elsewhere, look for Install app in the browser menu.
+                This browser will not hand over an install dialog. The Install button in the
+                toolbar shows where it lives instead — on iOS, Share and then Add to Home Screen;
+                elsewhere, Install app in the browser menu.
               </p>
             )}
           </section>
