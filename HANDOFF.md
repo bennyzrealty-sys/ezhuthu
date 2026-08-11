@@ -3,8 +3,9 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-11 · Phase 8 complete; the app is live at
-**https://bennyzrealty-sys.github.io/ezhuthu/**
+**Last updated:** 2026-08-11 · Phase 8 complete and installed on a phone; the app is live at
+**https://bennyzrealty-sys.github.io/ezhuthu/**. First real use found the empty document had no
+way in — fixed, see the correction at the end.
 
 ---
 
@@ -159,7 +160,14 @@ store listing — the only route onto a home screen is a URL.
   offline open, and the install button's honesty. These found a real worker bug on their first
   run — the `Vary` trap below.
 
-**Tests: 430 unit + 71 e2e + 8 perf, all passing.**
+**Writing from nothing.** `appendParagraph` in `DocumentView`, behind two affordances: **Start
+writing** in the empty state, and **+ New paragraph** under the last paragraph. Both append an
+empty block at the end and focus it; an already-empty last paragraph is focused rather than
+followed by a second one, so repeated taps cost no events. `tests/e2e/writing.spec.ts` covers the
+first paragraph, its survival across a reload, the hand-over to Enter, appending to an existing
+document, and the two ways this could otherwise pollute a permanent log.
+
+**Tests: 430 unit + 77 e2e + 8 perf, all passing.**
 
 ## Measured performance
 
@@ -500,6 +508,15 @@ All 33 are in `DECISIONS.md`. The twenty-three that departed from the original b
 | 0035 | The precache list is generated from the build and injected into the worker's bytes |
 
 ## Corrections made so far
+
+**Phase 8 — an empty document could not be written in.** The editor opens by tapping a paragraph
+(`BlockRow`), a fresh install has none, and the empty state said "Import a file to begin" — so the
+answer to "let me write something" was that there was nowhere to put it. Import is how a
+manuscript comes in; it is not how a sentence gets written. Found within minutes of the first
+install on a real phone, which is the entire argument for doing that early: seven phases of tests
+passed over a document nobody could start. The same gap had a quieter half — a document whose last
+paragraph is off screen had no way to add one at the end except placing a caret exactly at its end
+and pressing Enter. Both now have a button, and `tests/e2e/writing.spec.ts` is the regression.
 
 **Phase 1 — ADR-0009.** Originally claimed the retention ladder kept any point in history within a
 bounded number of events of an anchor. The test showed otherwise: the oldest anchors are dropped,
