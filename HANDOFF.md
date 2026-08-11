@@ -3,7 +3,8 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-10 · end of Phase 7, with Phases 5, 6 and 7 all landed on `main`
+**Last updated:** 2026-08-10 · after Phase 7, plus deployment (ADR-0034) on
+`claude/app-download-link-wnq0qn`
 
 ---
 
@@ -125,7 +126,22 @@ virtualiser to a result and marks it.
   English.
 
 
-**Tests: 384 unit + 58 e2e + 8 perf, all passing.**
+**Deployment (ADR-0034).** The app is now servable, and installable on a phone. It had never been
+deployed at all: asked for a link to put it on a phone, there was none, and a PWA has no APK and no
+store listing — the only route onto a home screen is a URL.
+
+- **The base is a build input.** `BASE_PATH` defaults to `/`; a GitHub Pages project site needs
+  `/<repo>/`. Everything the app asks the network for now resolves against it — `index.html` and
+  the bundled CSS through Vite's rewriting, the manifest through relative URLs, the worker
+  registration through `import.meta.env.BASE_URL`, and the worker's precache list through
+  `self.registration.scope`.
+- **`.github/workflows/pages.yml`** builds with the base set from the repository name and deploys
+  on every push to `main`. **Pages must be enabled once by hand** — Settings → Pages → Source:
+  *GitHub Actions*. Until then the deploy step 404s from the Pages API and nothing else is wrong.
+- Verified against a static server with the build mounted at `/ezhuthu/`: worker registered at the
+  sub-path with a matching scope, five sub-path URLs precached, no 404s, offline reload renders.
+
+**Tests: 404 unit + 66 e2e + 8 perf, all passing.**
 
 ## Measured performance
 
@@ -193,7 +209,14 @@ was found (see the snapshot trap below).
   and the pulse-on-scroll is timing-sensitive; `EditedRegionPulse` is unit-tested and the e2e
   covers the settings and their honesty. The pulse on a real scroll is manual-only.
 - **Service worker asset list is hand-maintained.** (Phase 6 needed no change — its code is in the
-  JS bundle, which is runtime-cached, not in the hand-listed shell of fonts/icons/manifest.)
+  JS bundle, which is runtime-cached, not in the hand-listed shell of fonts/icons/manifest.) The
+  deploy work did not fix this; it is the last piece of Phase 8 still owed, along with the install
+  prompt and offline verification tests.
+- **Nothing verifies the sub-path build in CI.** ADR-0034's guarantee was checked by hand against a
+  static server, once. A regression — a new origin-absolute path in the manifest, `sw.js` or a
+  stylesheet — would ship silently and only break the deployed site, never the suites, which all
+  run at the root.
+- **No e2e covers the install flow**, because Phase 8 has not built one to cover.
 
 - **The time-lapse panel cannot restore a past state**, deliberately (ADR-0029). It reads.
 - **The scrub shows no diff.** Which paragraphs changed between two stops is the obvious next
@@ -212,26 +235,31 @@ was found (see the snapshot trap below).
 - **`memory` perf test needs cross-origin isolation**, supplied by `vite.config.ts`
   `preview.headers`. It will silently skip if those headers are ever removed.
 
-## The next three tasks
+## The next four tasks
 
-1. **Phase 8 — PWA polish.** The last unbuilt phase: a build-generated precache manifest to
-   replace the hand-maintained asset list, the install flow, and offline verification tests. The
-   manifest now has a second reason to exist — the replay Worker is its own chunk, so a first
-   *offline* open cannot start time-lapse until the page has been loaded online once.
+1. **Enable Pages, once, in the repository settings**, and check the deployed site on a real
+   phone. This is the only step of the deploy that cannot be done from inside the repository
+   (ADR-0034), and until someone does it the Pages workflow is a red build that means nothing is
+   wrong. A real device is also where the manual IME checklist in `docs/MALAYALAM.md` finally gets
+   run.
 
-2. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
+2. **Phase 8 — PWA polish.** Deployment (ADR-0034) took the first bite: the app is servable and
+   installable. What remains is the build-generated precache manifest that replaces the
+   hand-maintained asset list, the in-app install prompt, and offline verification tests. The
+   generated manifest now has a second reason to exist — the replay Worker is its own chunk, so a
+   first *offline* open cannot start time-lapse until the page has been loaded online once — and a
+   third: it would precache against the base rather than a list someone has to keep in step.
+
+3. **Range-select mode and copy affordances** (ADR-0011). The one accepted-limitation ADR whose
    mitigation is still outstanding. Whole-block granularity by tap and extend; copy block, copy
    range, copy document. Block-granular selection composes naturally with the Phase 6 Delete
    affordance and ghost markers.
 
-3. **Revisit the guessed constants** — the four in `signals/constants.ts` (ADR-0017),
+4. **Revisit the guessed constants** — the four in `signals/constants.ts` (ADR-0017),
    `REWRITE_WINDOW_DAYS` in `features/resume/destinations.ts`, and the ADR-0006 decay bands and
    saturation curve in `features/visibility/intensity.ts`. This needs a person writing in the app
    for a few sessions; no automated run substitutes for it. A resume suggestion that feels wrong, or
    a margin bar that fades wrong, is the symptom.
-
-3. **Phase 8 — PWA polish.** A build-generated precache manifest, which the replay Worker chunk
-   now needs as well as the shell; the install flow; and offline verification tests.
 
 ## Traps a fresh session will fall into
 
@@ -243,6 +271,13 @@ while typing, the first commit on a log past `SNAPSHOT_INTERVAL` finds a snapsho
 duly offered it the space before the next keystroke to materialise 1,563 blocks in. There are two
 gates now — a debounce for *whether* the writer has finished, idle for *when* inside the quiet
 period. Anything else that materialises the document from idle needs both.
+
+**An origin-absolute path is portable right up until the app is not served from the root.** Under
+`/<repo>/` a `/fonts/...` or `/sw.js` does not throw — it 404s, and the page still loads. What the
+reader sees is a blank space where the Malayalam should be (`font-display: block`), no install
+prompt, and no offline capability. Every suite runs at the root and every one of them passes. If
+you add a path, resolve it against `import.meta.env.BASE_URL`, or against
+`self.registration.scope` inside the worker, or make it relative in the manifest. See ADR-0034.
 
 **`Dexie.minKey` is not a valid low bound inside a compound key range.** It is `-Infinity`, and
 `between([docId, minKey, minKey], …)` throws `DataError` at the store rather than matching
@@ -449,6 +484,7 @@ All 33 are in `DECISIONS.md`. The twenty-three that departed from the original b
 | 0031 | File names handed to the browser are ASCII; the timestamp identifies the file |
 | 0032 | A revision is judged by the word that changed, never by the paragraph around it |
 | 0033 | Undo appends its reversal and never rewrites the log; the stack is one session |
+| 0034 | The app must be servable from a sub-path; the base is a build input, not a constant |
 
 ## Corrections made so far
 

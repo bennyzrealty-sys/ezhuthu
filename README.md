@@ -55,6 +55,34 @@ npm run corpus:generate  # regenerate the synthetic Malayalam test document
 
 Requires Node 20.19+ (22 recommended, see `.nvmrc`).
 
+## Installing it on a phone
+
+There is no APK and no store listing. `ezhuthu` is a PWA: you install it by opening its URL in
+the phone's browser and adding it to the home screen. From then on it launches full-screen from
+its own icon and works with the network off.
+
+The repository deploys itself to GitHub Pages — `.github/workflows/pages.yml`, on every push to
+`main`. **Pages has to be enabled once by hand:** Settings → Pages → Source: *GitHub Actions*.
+Until that is done the workflow's deploy step fails with a 404 from the Pages API; the build
+above it is fine. Once enabled, the site is at:
+
+```
+https://<owner>.github.io/<repo>/
+```
+
+Then, on the phone:
+
+- **Android / Chrome** — open the URL, menu (⋮) → *Install app* (or *Add to Home screen*).
+- **iOS / Safari** — open the URL, Share → *Add to Home Screen*. It must be Safari; other iOS
+  browsers cannot install. Installing also makes iOS much less likely to evict the database
+  (ADR-0013), so it matters more here than it looks.
+
+Open it once while online so the shell and the font are cached; after that it opens offline.
+
+A project site is served from `/<repo>/` rather than the origin root, so the build takes the base
+path as an input — `BASE_PATH=/ezhuthu/ npm run build`. Unset means the root, which is what the
+dev server, the test suites and `vercel.json` all assume. See ADR-0034.
+
 ## Performance budgets
 
 These are enforced by `tests/perf`, not vibes. See the measured numbers under
