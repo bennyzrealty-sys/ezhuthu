@@ -1,20 +1,14 @@
 /**
  * Cache-first service worker for the app shell.
  *
- * Phase 1 scaffolding: enough that the app opens with the network disabled,
- * which is the minimum for something that claims to be offline-first. Phase 8
- * replaces the hand-maintained asset list with a build-generated precache
- * manifest and adds the install flow and offline verification tests.
- *
  * Plain JS on purpose — it is served straight from /public and never passes
- * through the bundler.
+ * through the bundler. The one thing done to it is the precache list below,
+ * substituted into the built copy by `scripts/precache.ts` (ADR-0035).
  *
  * IMPORTANT: this worker caches the app shell only. It must never cache or
  * intercept anything carrying document content, because there is no such
  * traffic — the document lives in IndexedDB and never crosses the network.
  */
-
-const CACHE = 'ezhuthu-shell-v1';
 
 // Every shell URL is resolved against the registration scope rather than
 // written as an origin-absolute path: the app is served from /<repo>/ on a
@@ -23,18 +17,37 @@ const CACHE = 'ezhuthu-shell-v1';
 // `scope` already ends in a slash. See ADR-0034.
 const scoped = (path) => new URL(path, self.registration.scope).href;
 
+/*
+ * Everything between the markers is REPLACED AT BUILD TIME with the real asset
+ * list and a revision hashed from their contents. Do not edit it, and do not
+ * move the list into a file the worker fetches: the browser decides whether to
+ * install a new worker by byte-comparing this script, so a list held anywhere
+ * else would leave sw.js identical across deploys and the cached shell would
+ * never update. ADR-0035.
+ *
+ * The values below are the fallback for an unbuilt copy — `vite dev` skips
+ * registration entirely (src/pwa/register.ts), so nothing normally runs them.
+ */
+// --- build-injected: scripts/precache.ts ---
+const BUILD = 'dev';
+const PRECACHE = ['index.html', 'manifest.webmanifest'];
+// --- end build-injected ---
+
+// Content-addressed, so `activate` drops the previous shell exactly when the
+// shell has actually changed — and, because the previous cache is dropped
+// whole, so do any runtime-cached entries left under an older base (ADR-0034).
+const CACHE = `ezhuthu-shell-${BUILD}`;
+
 const SHELL_INDEX = scoped('index.html');
 
-// The font is precached rather than left to the runtime cache below: it is on
-// the first-paint path with `font-display: block` (src/ui/fonts.css), so a
-// cold offline open that has to wait for it shows an empty page (ADR-0019).
-const SHELL = [
-  self.registration.scope,
-  SHELL_INDEX,
-  scoped('manifest.webmanifest'),
-  scoped('icons/icon.svg'),
-  scoped('fonts/manjari-regular.woff2'),
-];
+// The scope itself is cached alongside index.html: a navigation to the root
+// asks for `/`, and the cache is keyed by URL.
+//
+// The font is in the generated list by rule rather than by hand now, but it is
+// still the entry that matters most: it is on the first-paint path with
+// `font-display: block` (src/ui/fonts.css), so a cold offline open that has to
+// wait for it shows an empty page (ADR-0019).
+const SHELL = [self.registration.scope, ...PRECACHE.map(scoped)];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
