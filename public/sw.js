@@ -69,6 +69,19 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+/*
+ * ignoreVary, everywhere, deliberately. The shell is same-origin static files,
+ * for which Vary carries no meaning we care about — but servers send it
+ * anyway (vite preview stamps `Vary: Origin` on every asset), and a stored
+ * response with a Vary header only matches a request whose listed headers
+ * agree with the ones cache.add() happened to send. The page fetches its
+ * script, stylesheet and font with `crossorigin` — CORS mode, an Origin
+ * header — so under such a server every one of them missed the cache, fell
+ * through to fetch(), and an offline reload rendered a blank page. Found by
+ * tests/e2e/offline.spec.ts, deterministically, on the first run.
+ */
+const MATCH = { ignoreVary: true };
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
@@ -79,13 +92,13 @@ self.addEventListener('fetch', (event) => {
   // Navigations: cache-first on the shell, so a cold offline open works.
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match(SHELL_INDEX).then((cached) => cached ?? fetch(request)),
+      caches.match(SHELL_INDEX, MATCH).then((cached) => cached ?? fetch(request)),
     );
     return;
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.match(request, MATCH).then((cached) => {
       if (cached) return cached;
       return fetch(request).then((response) => {
         if (response.ok && response.type === 'basic') {
