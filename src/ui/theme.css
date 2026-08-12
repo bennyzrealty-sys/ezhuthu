@@ -1008,3 +1008,26 @@ mark,
   padding: 0.3rem 0.7rem;
   font-size: 0.85rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Getting the writing out (ADR-0036)
+   --------------------------------------------------------------------------- */
+
+/* The end of the document is where a writer stops and wants the file. The
+   toolbar's Download is sticky and always reachable, but it is one of ten
+   identically weighted buttons; this one is where the hand already is. */
+.doc-end-actions {
+  max-width: var(--measure);
+  margin: 0 auto 4rem;
+  padding: 0 1rem;
+  text-align: center;
+}
+
+.doc-end-actions button {
+  min-height: 44px;
+  padding: 0.7rem 1.4rem;
+}
+
+.doc-end-actions .note {
+  margin-top: 0.5rem;
+}

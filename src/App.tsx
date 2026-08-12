@@ -461,7 +461,13 @@ export default function App() {
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
         </button>
-        <button onClick={onDownload} disabled={busy !== null} data-testid="download-document">
+        <button
+          onClick={onDownload}
+          disabled={busy !== null}
+          data-testid="download-document"
+          className="primary"
+          title="Save the whole document to this device as a .txt file"
+        >
           Download
         </button>
         <button onClick={onExportCorpus} disabled={busy !== null} data-testid="corpus-export">
@@ -663,6 +669,7 @@ export default function App() {
         docId={DOC_ID}
         onChange={onDocumentChange}
         feedback={feedback}
+        onDownload={onDownload}
       />
 
       {/*

@@ -170,6 +170,17 @@ test('the flushed edit is committed, not just written to the file', async ({ pag
   await expect(page.locator('.block-row').first()).toContainText('ലോഗിലും ഉണ്ടാകണം.');
 });
 
+test('the button at the end of the document downloads too', async ({ page }) => {
+  // The toolbar's Download is the seventh of ten identically weighted buttons.
+  // This one is where the writing stops.
+  await importCorpus(page, SMALL_DOC);
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('download-document-end').click(),
+  ]);
+  expect(await readFile(await download.path(), 'utf8')).toContain('മൂന്നാം ഖണ്ഡിക.');
+});
+
 test('typing survives the app being put away before the commit timer', async ({ page }) => {
   /*
    * Not about downloading, and found while looking for it: the 400ms the

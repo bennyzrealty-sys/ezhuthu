@@ -111,6 +111,13 @@ export interface DocumentViewProps {
   now?: () => number;
   /** Scroll-past feedback (ADR-0022). Off by default. */
   feedback?: FeedbackSettings;
+  /**
+   * Write the document to a file. Rendered at the end of the text, where the
+   * writer stops writing — the toolbar has one too, but it is the seventh of
+   * ten identical buttons, and "I cannot download my script" was reported by
+   * someone looking straight at it. Absent means the affordance is not shown.
+   */
+  onDownload?: () => void;
   ref?: RefObject<DocumentViewHandle | null>;
 }
 
@@ -125,6 +132,7 @@ export function DocumentView({
   onChange,
   now,
   feedback = DEFAULT_FEEDBACK,
+  onDownload,
   ref,
 }: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
@@ -836,6 +844,21 @@ export function DocumentView({
         >
           + New paragraph
         </button>
+        {onDownload !== undefined && (
+          <div className="doc-end-actions">
+            <button
+              type="button"
+              className="primary"
+              data-testid="download-document-end"
+              onClick={onDownload}
+            >
+              Download this writing
+            </button>
+            <p className="note">
+              A plain .txt file of every paragraph above, saved to this device.
+            </p>
+          </div>
+        )}
       </div>
       <Minimap blocks={index} onJump={jumpToIndex} now={now} />
     </div>
