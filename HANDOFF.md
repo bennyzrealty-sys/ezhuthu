@@ -3,9 +3,15 @@
 **Written for a session with no memory of the previous one.** Read this first. Updated at the end
 of every working session — if it is stale, that is a bug.
 
-**Last updated:** 2026-08-11 · Phase 8 complete and installed on a phone; the app is live at
-**https://bennyzrealty-sys.github.io/ezhuthu/**. First real use found the empty document had no
-way in — fixed, see the correction at the end.
+**Last updated:** 2026-08-12 · Phase 8 complete, deployed, and installed on a phone. The app is
+live at **https://bennyzrealty-sys.github.io/ezhuthu/**.
+
+**The first hour on a real device found two things seven phases of green tests had not**, both now
+fixed and both written up under *Corrections*: an empty document had no way to start writing in
+it, and there was no way to download the document at all — while the README claimed there was.
+Neither was subtle, and neither was reachable from any test that existed, because every suite
+either imported a document or asked the log what happened. **The next session should assume there
+are more of these, and the way to find them is to use the app, not to read it.**
 
 ---
 
