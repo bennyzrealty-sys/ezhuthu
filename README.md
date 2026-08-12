@@ -140,12 +140,14 @@ of every working session. Read it first if you are picking this up cold.
 | 5 | Resume — the four-destination strip | **done** |
 | 6 | Visibility — margin bar, decay, minimap, ghost markers, haptics | **done** |
 | 7 | Time-lapse + export — scrub UI, edit corpus | **done** |
-| 8 | PWA polish — install flow, offline verification | not started |
+| 8 | PWA polish — install flow, offline verification, deploy | **done** |
 
 ## Your data is yours
 
-The event log is a complete record of how the document was written. It exports as JSON. The
-document exports as `.txt` and `.md`. The accumulated (before, after) edit pairs export as JSONL
+The event log is a complete record of how the document was written. It exports as JSON (**Back
+up**). The document itself downloads as plain `.txt` — the same format **Import** accepts, so it
+round-trips byte for byte (**Download**). The accumulated (before, after) edit pairs export as
+JSONL (**Export corpus**)
 — a personal style corpus in a low-resource language, produced for free by normal writing.
 See [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md).
 
