@@ -13,6 +13,19 @@ Neither was subtle, and neither was reachable from any test that existed, becaus
 either imported a document or asked the log what happened. **The next session should assume there
 are more of these, and the way to find them is to use the app, not to read it.**
 
+**The second hour found a third, and it was the same shape again** (ADR-0036, and *Corrections*).
+The Download button that had just been built produced a file WITHOUT the writer's edit in it —
+and, for a paragraph begun in the same minute, a file with an empty line where the writing was.
+The editor holds the focused paragraph in a ref for 400ms so typing costs no render; everything
+that reads the whole document reads committed state, so for those 400ms it cannot see the
+paragraph being written. Every test had blurred the field and waited for the commit before
+downloading, which is not what a person does — and on the browsers the suites run in, tapping a
+button moves focus and the blur commits, so the ordering came out right by accident. Safari and
+iOS do not focus a button on tap. **The feature was correct on the machine that tested it and
+wrong on the device it was built for.** The same seam was also losing typing outright when the
+app was backgrounded inside the 400ms; telemetry about the writing had flushed on
+`visibilitychange` since Phase 4 and the writing had not.
+
 ---
 
 ## Where the project is
@@ -179,7 +192,20 @@ document, and the two ways this could otherwise pollute a permanent log.
 import → export is byte-identical, asserted in both suites over chillu, ZWJ and ZWNJ. Reads
 `[docId+order]`, skips soft-deleted blocks.
 
-**Tests: 438 unit + 82 e2e + 8 perf, all passing.**
+- **The paragraph being typed is in the file** (ADR-0036). `BlockEditor.flush()` hands over the
+  draft the field is holding and stands the idle timer down; `DocumentViewHandle.flushPendingEdit()`
+  commits it through the ordinary append path and is **awaited** by Download, Back up and Export
+  corpus before any of them reads. Mid-composition the commit is refused (rule 6) and the draft is
+  passed to `exportDocument` as a `PendingEdit` instead, so the file is right either way.
+- **Two buttons, because one was not findable.** The toolbar's Download is now the only primary
+  button up there, and there is a second — **Download this writing** — at the end of the document,
+  where the writer stops typing. `download-document` and `download-document-end`.
+- **`src/ui/download.ts` degrades honestly.** The anchor and its object URL are torn down a minute
+  later rather than on the next task, and where the `download` attribute is not honoured at all
+  (older WebKit, the in-app browser views links from a messaging app open in) the text is opened in
+  a tab and the toolbar says so, instead of a button that appears to do nothing.
+
+**Tests: 441 unit + 87 e2e + 8 perf, all passing.**
 
 ## Measured performance
 
@@ -246,6 +272,13 @@ was found (see the snapshot trap below).
 - **The scroll-past visual pulse has no e2e.** Vibration can't be asserted in a headless browser
   and the pulse-on-scroll is timing-sensitive; `EditedRegionPulse` is unit-tested and the e2e
   covers the settings and their honesty. The pulse on a real scroll is manual-only.
+- **The toolbar is ten equally weighted buttons and wraps to three rows on a phone**, eating
+  roughly a fifth of the viewport above the text. Download is now the one primary among them and
+  there is a second at the end of the document, which is what the report actually needed — but the
+  crowding is the underlying problem and it is untouched. `Import`, `Download`, `Export corpus` and
+  `Back up` are four controls that all sound like moving a file, and three of them are not the
+  manuscript. An overflow menu, or grouping the file controls behind one, is the obvious next move.
+
 - **Nothing verifies the sub-path build in CI.** ADR-0034's guarantee was checked by hand against a
   static server, once. A regression — a new origin-absolute path in the manifest, `sw.js` or a
   stylesheet — would ship silently and only break the deployed site, never the suites, which all
@@ -266,6 +299,12 @@ was found (see the snapshot trap below).
   `preview.headers`. It will silently skip if those headers are ever removed.
 
 ## The next three tasks
+
+0. **Finish the button-by-button pass on a real device.** ADR-0036 came out of one report and the
+   audit around it covered the download path, the editor's commit seam, and the toolbar. It did
+   not cover Time-lapse, Bookmarks or the resume strip under a *thumb* rather than under
+   Playwright. Every defect found on this device so far has been an interaction the suites had no
+   way to perform.
 
 1. **A real-device pass.** Install from the live URL on an actual phone (remember: a link opened
    inside Gmail's viewer cannot install — Open in Chrome first), then write in the app for a few
@@ -382,6 +421,14 @@ string both ways and requires they agree.
 segments the text, which is the expensive half of a search. `hasMatch` and `countMatches` are
 deliberately map-free; making `countMatches` call `findMatches().length` cost 100 ms on a common
 query over the corpus.
+
+**A test that blurs the field before pressing a button is testing the commit, not the button.**
+Every download test did this, and the feature it covered was broken for a whole class of browser
+(ADR-0036). Blur is not a step a person performs; it is something that happens, or does not, when
+they tap something else — and whether it happens is a platform difference (Safari and iOS do not
+focus a button on tap; Chromium does). If a test's setup contains `blur()` followed by waiting for
+the text to appear somewhere, ask what it is standing in for and whether the real gesture provides
+it. The same question applies to `.tap()` in a headless Chromium, which also blurs.
 
 **Activate the editor on `click`, never `pointerdown`.** Swapping the read-only div for a textarea
 on pointerdown mounts and focuses the field, and then the browser finishes the gesture it already
@@ -532,6 +579,24 @@ in `import.ts` since Phase 2, documented as the inverse of `splitIntoBlocks`, wi
 The feature is now built and the README says `.txt`, which is what is true. Same lesson as Phase 3's
 missing shaping assertion: a documented capability is not a capability, and nothing in the suites
 noticed because no test asked for the writing back.
+
+**Phase 8 — the Download button worked and the file was wrong** (ADR-0036). Reported as "I can't
+download a script which I have edited". The button was there, on the live site, and it produced a
+`.txt` that did not contain the edit — and for a paragraph begun in the same minute, a `.txt` with
+an empty line where the writing was. `BlockEditor` holds the focused paragraph in a ref and
+commits after 400ms of quiet so a keystroke costs no render; Download, Back up and Export corpus
+all read committed state, so for those 400ms none of them can see the paragraph being written.
+The fix is a `flush()` on the editor that the three commands await before reading, plus the same
+flush on `visibilitychange`/`pagehide` — the window was also losing typing outright when the app
+was backgrounded.
+
+Worth reading twice, because it is the reason this was shipped: **the suites could not have caught
+it, and it was not for lack of tests.** Every download test blurred the field and waited for the
+text to appear in the read-only row before pressing the button — which is to say, waited for the
+commit. And on the browsers the suites run in, tapping a button moves focus, so the editor's own
+`blur` committed and the ordering came out right *by accident*. Safari and iOS do not focus a
+button on tap. A test can only reproduce this by activating the button without letting focus leave
+the field, which `tests/e2e/download.spec.ts` now does deliberately.
 
 **Phase 8 — an empty document could not be written in.** The editor opens by tapping a paragraph
 (`BlockRow`), a fresh install has none, and the empty state said "Import a file to begin" — so the

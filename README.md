@@ -146,7 +146,8 @@ of every working session. Read it first if you are picking this up cold.
 
 The event log is a complete record of how the document was written. It exports as JSON (**Back
 up**). The document itself downloads as plain `.txt` — the same format **Import** accepts, so it
-round-trips byte for byte (**Download**). The accumulated (before, after) edit pairs export as
+round-trips byte for byte (**Download**, in the toolbar and again under the last paragraph). What
+you get is what is on screen, including the sentence you are in the middle of typing (ADR-0036). The accumulated (before, after) edit pairs export as
 JSONL (**Export corpus**)
 — a personal style corpus in a low-resource language, produced for free by normal writing.
 See [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md).

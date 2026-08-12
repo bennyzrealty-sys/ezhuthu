@@ -1561,3 +1561,75 @@ real `public/sw.js` so the markers cannot be edited away unnoticed.
   content-addressed), so returning readers are not made to re-fetch an unchanged shell.
 - The dev fallback block means `public/sw.js` in the repository is not what ships; the built copy
   differs by exactly the marked block. Anyone reading the deployed worker sees the real list.
+
+---
+
+## ADR-0036 — A command that reads the whole document commits the paragraph being typed first
+
+**Status:** accepted
+
+**Context.** "I cannot download the script I edited." The Download button existed, it was on the
+live site, it worked, and the file it produced did not contain the writer's edit — and when the
+paragraph had been *started* in the same minute, the file contained an empty line where the
+writing was.
+
+The cause is the seam that makes typing free. `BlockEditor` holds the focused paragraph's text in
+a ref and commits it after `IDLE_COMMIT_MS` (400ms) of quiet, so that a keystroke stores a string
+and returns (docs/PERFORMANCE.md). Everything else in the app reads committed state: the `blocks`
+projection, or the event log. For 400ms after every keystroke, therefore, the paragraph under the
+caret is one the rest of the app cannot see. Download, Back up and Export corpus all read the
+whole document, and all three read it from there.
+
+This was invisible for two reasons, and both are worth naming because they will hide the next one
+too. First, **every test blurred the field and then waited for the text to appear in the
+read-only row** — which is to say, waited for the commit — so no suite could reach the state. A
+person types and taps. Second, **on the browsers the suites run in, tapping a button moves focus
+to it**, the editor's own `blur` commits, and the ordering happens to come out right. Safari and
+iOS do not focus a button on tap. Nothing blurred, nothing committed, and the file was written
+from state the writer had already moved past. The feature was correct on the machine that tested
+it and wrong on the device it was built for.
+
+Looking for it turned up the same seam costing more than a bad file: nothing flushed the draft
+when the app was **backgrounded**. A writer who typed a line and swiped to the home screen inside
+those 400ms lost it, permanently — while `signals/collector.ts` had flushed *telemetry about the
+writing* on `visibilitychange` since Phase 4.
+
+**Decision.** The draft is not private to the editor any more. `BlockEditor` exposes
+`flush()`, which hands over the field's current value and stands the idle timer down. It does not
+write: the caller owns the append path and has to be able to await it.
+
+1. **Every whole-document command flushes first.** Download, Back up and Export corpus call
+   `DocumentViewHandle.flushPendingEdit()` and **await** it before reading. The edit is committed
+   through the ordinary append path — one event, one block, rule 1 — so the flush makes the
+   writing durable rather than only making the file right.
+2. **`visibilitychange` and `pagehide` flush too.** The manuscript gets at least the guarantee its
+   telemetry already had.
+3. **A refused commit still produces a correct file.** The one case a commit cannot happen is an
+   IME mid-word (rule 6, ADR-0010) — the case a Malayalam writer is most often in. `flush` reports
+   `composing`, no commit is attempted, and the draft is passed to `exportDocument` as a
+   `PendingEdit` overriding that block's stored text. Rule 6 is about not corrupting the *input*;
+   it says nothing about what a file should contain, and the file must show what is on screen.
+
+**Alternatives considered.**
+
+- *Commit on every keystroke.* Deletes the seam and the 16ms budget with it, and writes an event
+  per character into a permanent log.
+- *Commit during composition anyway.* Directly against rule 6. The override exists so that the
+  refusal costs nothing visible.
+- *Let the editor's `blur` keep carrying this.* It is what the app was already relying on, and it
+  is a side effect of focus behaviour that differs by platform. The correctness of a download
+  should not depend on whether a browser focuses buttons.
+- *Read the DOM at export time.* The focused field is one of ~12 rendered rows out of thousands;
+  the document is not in the DOM. Only the editor knows the draft.
+
+**Consequences.**
+
+- Download, Back up and Export corpus are each one `await` slower — a single append.
+- A pending edit reaches `exportDocument` as data (`PendingEdit`), so the pure export stays
+  testable without a React tree, and the composing path is covered by unit tests.
+- `visibilitychange` now writes to the log. It is one append for one block on a path that
+  previously wrote only telemetry; if a future flush there grows into anything that scales with
+  document size, this is where to look.
+- The tests for this feature must activate the button **without** letting focus leave the field,
+  or they are testing the browser's focus behaviour rather than the app. `tests/e2e/download.spec.ts`
+  does this deliberately and says so.
