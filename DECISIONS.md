@@ -1633,3 +1633,95 @@ write: the caller owns the append path and has to be able to await it.
 - The tests for this feature must activate the button **without** letting focus leave the field,
   or they are testing the browser's focus behaviour rather than the app. `tests/e2e/download.spec.ts`
   does this deliberately and says so.
+
+---
+
+## ADR-0037 — There is more than one way out of the app, and the clipboard is the one that cannot be blocked
+
+**Status:** accepted
+
+**Context.** The download was fixed (ADR-0036) and the report came back: *still* no way to get the
+script off the phone. The bug in ADR-0036 was real and it was not the whole answer, because the
+remaining half is not in our code at all.
+
+**On iOS, in standalone display mode — the app opened from its home-screen icon, which is how this
+app is meant to be used — WebKit does not save an `<a download>` to a file.** This is longstanding
+intended behaviour rather than a bug we can work around from inside the page (WebKit 275288 records
+the same symptom). And a standalone PWA has no address bar and no tab strip, so the fallback of
+"navigate to the blob and let the user save it" has nowhere to go. The tap looks exactly like a
+button that does nothing. Everything in ADR-0031 about the `download` attribute is still true; it
+is simply not consulted.
+
+So the app needs a route out that does not depend on the browser having somewhere to put a file.
+A clipboard write either succeeds or throws.
+
+**The hard part is not the clipboard, it is *when*.** The text does not exist when the tap happens
+— it has to be read out of IndexedDB — and a clipboard write is permitted only while the browser
+still considers the user's gesture live. Chromium keeps that across an `await`; WebKit does not. So
+
+```
+const text = await readTheDocument();      // activation is spent here
+await navigator.clipboard.writeText(text); // NotAllowedError
+```
+
+works on every machine this is developed and tested on and fails on the one device it is for. That
+is the same shape as ADR-0036's bug, one layer down, and it is why this is an ADR rather than three
+lines at a call site.
+
+**Decision.**
+
+1. **Copy is a first-class way out, beside Download rather than behind it.** `Copy all` in the
+   toolbar and `Copy all text` at the end of the document, over the same `exportDocument` string
+   the file is built from — so the two routes cannot disagree.
+2. **The write is registered synchronously inside the gesture and handed a Promise.**
+   `copyDocumentText` takes a `Promise<string>`, not a string, and calls
+   `navigator.clipboard.write([new ClipboardItem({'text/plain': blobPromise}))]` before awaiting
+   anything. The asynchronous `ClipboardItem` form exists for exactly this; WebKit shipped it so a
+   payload could be produced after the gesture. `tests/e2e/copy.spec.ts` asserts the ordering
+   without timing, using a flag flipped from a `setTimeout` — an IndexedDB read always completes in
+   a later task, so a "simplification" back to the broken shape fails the test.
+3. **Three routes, then the floor.** Async `ClipboardItem` → `writeText` → `document.execCommand`
+   (which needs no permission, which is why it is last rather than dropped) → and if all three are
+   refused, the writing is put in a selected field with two words of instruction. A button that
+   reports failure is not an answer when the thing in the app is the only copy of the work.
+4. **Share is offered where a file can actually be shared.** `navigator.canShare({files})` is
+   feature-detected with a real `File` — no user-agent sniffing (ADR-0034) — and where it is true
+   the sheet is the route to "Save to Files" on an iPhone. Unlike the clipboard there is no
+   promise-taking form, so this one path genuinely cannot be made certain from inside the page: if
+   the activation is spent the refusal arrives as `NotAllowedError` and the writer gets the text
+   instead.
+5. **Rule 9 is not weakened.** "Nothing leaves the device" is about *us* — no network call for user
+   data, no analytics, no telemetry. The clipboard is the device's. The share sheet is the writer
+   choosing, in an OS dialog, where their own writing goes. Neither is egress performed by this
+   app, and there is still no upload path to review because there is no upload path.
+
+This also discharges the last outstanding mitigation in ADR-0011, which named "copy document"
+among the affordances that would make whole-block-only selection acceptable and had never been
+built.
+
+**Alternatives considered.**
+
+- *Read the document first, then copy.* The broken shape. Works everywhere except the target.
+- *Hold the exported text in memory so the tap is synchronous.* Would make Share reliable too, but
+  it means keeping the whole manuscript resident and invalidating it on every keystroke — against
+  the performance rules for a benefit the `ClipboardItem` form already gives the clipboard.
+- *Drop `execCommand`.* It is deprecated and it is the only route in some in-app browser views.
+- *Sniff for iOS and show a different button.* No user-agent sniffing (ADR-0034), and it would be
+  wrong the first time either platform changed.
+
+**Consequences.**
+
+- Two egress routes to keep in step. They share `exportDocument`, so a fidelity test over one
+  covers the string in both; `tests/unit/exportFidelity.test.ts` asserts that string against the
+  documented Malayalam forms, surrogate pairs and a 1,500-paragraph document.
+- Reported sizes changed with this: `characters` is code points and `bytes` is the UTF-8 length of
+  the file. `text.length` was UTF-16 code units, which understated a Malayalam manuscript
+  threefold — a number that disagrees with the phone's Downloads screen undermines exactly the
+  claim being made.
+- The clipboard escape hatch renders the whole document into a `<textarea>`. That is a deliberate
+  whole-document read in the UI, like the export itself, and it happens only when three routes have
+  already failed.
+- **What cannot be verified here.** Playwright cannot drive iOS, so the claim that the
+  `ClipboardItem` promise form survives WebKit's activation check after our read is reasoned from
+  the API's purpose, not measured. The device checklist in `HANDOFF.md` names the checks that must
+  be run by hand.

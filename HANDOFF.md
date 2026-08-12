@@ -13,6 +13,21 @@ Neither was subtle, and neither was reachable from any test that existed, becaus
 either imported a document or asked the log what happened. **The next session should assume there
 are more of these, and the way to find them is to use the app, not to read it.**
 
+**The third hour found four more, and three of them were losing the writing itself** (ADR-0037,
+and *Corrections*). Auditing for the SHAPE of the download bug — a command that reads committed
+state while the editor holds the current paragraph in a ref — rather than for the feature, turned
+up: typing lost outright when the paragraph being written scrolled out of the virtualised window
+(no `blur` fires for a focused element that is *removed*, in Chromium or WebKit); **Undo** pressed
+inside the commit window reversing an older unrelated edit and discarding the current sentence;
+and **+ New paragraph** silently doing nothing after the first paragraph of a fresh document was
+typed. The editor now commits on unmount, and every command flushes first.
+
+The download itself needed a second answer too, and it is not in our code: **on iOS, in standalone
+display mode, WebKit does not save an `<a download>` to a file**, and a home-screen PWA has no
+address bar to fall back into. So there is now a **Copy all** button over the same bytes — a
+clipboard write either succeeds or throws — and a **Share** button where the OS can take a file.
+See ADR-0037 for why the clipboard call has to be *issued* before the document is read.
+
 **The second hour found a third, and it was the same shape again** (ADR-0036, and *Corrections*).
 The Download button that had just been built produced a file WITHOUT the writer's edit in it —
 and, for a paragraph begun in the same minute, a file with an empty line where the writing was.
@@ -200,12 +215,21 @@ import → export is byte-identical, asserted in both suites over chillu, ZWJ an
 - **Two buttons, because one was not findable.** The toolbar's Download is now the only primary
   button up there, and there is a second — **Download this writing** — at the end of the document,
   where the writer stops typing. `download-document` and `download-document-end`.
+- **Copying the whole document** (`src/ui/clipboard.ts`, ADR-0037). `Copy all` in the toolbar and
+  at the end of the document, over the same `exportDocument` string the file is built from. The
+  write is *issued* synchronously inside the tap and handed a Promise of the text, because WebKit
+  does not keep user activation across an `await` — the ordering is asserted without timing in
+  `tests/e2e/copy.spec.ts`. Three routes (async `ClipboardItem` → `writeText` → `execCommand`) and
+  then a selected field to copy by hand, which is the floor under the feature.
+- **Sharing the file** (`canShareFile`/`shareTextFile`). Offered only where `navigator.canShare`
+  accepts a real `File` — feature-detected, no UA sniffing. On an iPhone this is the route that
+  reaches Files at all.
 - **`src/ui/download.ts` degrades honestly.** The anchor and its object URL are torn down a minute
   later rather than on the next task, and where the `download` attribute is not honoured at all
   (older WebKit, the in-app browser views links from a messaging app open in) the text is opened in
   a tab and the toolbar says so, instead of a button that appears to do nothing.
 
-**Tests: 441 unit + 87 e2e + 8 perf, all passing.**
+**Tests: 449 unit + 105 e2e + 8 perf, all passing.**
 
 ## Measured performance
 
@@ -297,6 +321,28 @@ was found (see the snapshot trap below).
   would want a stream.
 - **`memory` perf test needs cross-origin isolation**, supplied by `vite.config.ts`
   `preview.headers`. It will silently skip if those headers are ever removed.
+
+## The device checklist — run by hand before shipping any change to egress
+
+Playwright cannot drive iOS, and headless Chromium's clipboard is in-process. These are the checks
+no suite here can make. Run them on the installed PWA before changing `features/io/export.ts`,
+`ui/clipboard.ts`, `ui/download.ts` or `render/BlockEditor.tsx`.
+
+- [ ] Android, home-screen PWA: Download a long document. The file appears in Downloads, opens, and
+      the Malayalam renders.
+- [ ] iOS Safari, home-screen PWA: tap Download. Record what actually happens — this is the case
+      ADR-0037 says cannot work, and the app should be saying so rather than appearing to hang.
+- [ ] iOS Safari, home-screen PWA: **Copy all mid-sentence with the keyboard still open**, without
+      dismissing it. Paste into Notes. The last word typed is present. This is the single most
+      important check in this list; it is the one thing ADR-0037 reasons about and cannot measure.
+- [ ] iOS: Share → Save to Files. The file arrives and opens.
+- [ ] Android: Copy all on a long document, paste into Docs, compare the character count against
+      the one the app reported.
+- [ ] Paste into WhatsApp and confirm chillu and ZWNJ words are unchanged.
+- [ ] Open the live URL inside Gmail's in-app viewer and tap Download: the honest "opened in a tab"
+      message, and the text reachable.
+- [ ] Copy all while a Gboard transliteration candidate is still unresolved: the candidate text is
+      in the paste, and nothing is duplicated.
 
 ## The next three tasks
 
@@ -579,6 +625,30 @@ in `import.ts` since Phase 2, documented as the inverse of `splitIntoBlocks`, wi
 The feature is now built and the README says `.txt`, which is what is true. Same lesson as Phase 3's
 missing shaping assertion: a documented capability is not a capability, and nothing in the suites
 noticed because no test asked for the writing back.
+
+**Phase 8 — three ways the writing was being lost, none of them about downloading** (ADR-0037).
+Found by auditing for the *shape* of the download bug rather than for the feature. All three are
+the same seam: the editor holds the focused paragraph in a ref, and the app was relying on the
+field's own `blur` to save it — which is a platform behaviour, not a guarantee.
+
+1. **Typing was lost when the paragraph scrolled out of the window.** The editor is an ordinary
+   virtualised row, and a focused element that is *removed* from the document gets no blur event in
+   Chromium or WebKit. Type a line, flick up the page to check something, and the line was gone.
+   For a long-form editor this is the worst bug in the list. `BlockEditor` now commits on unmount.
+2. **Undo reversed the wrong thing.** `undoLast` reads the tail of the log, which cannot contain
+   the paragraph being typed, so an undo pressed inside the commit window reversed an older
+   unrelated edit *and* the reload discarded the current sentence — both under a success message.
+   It flushes first now, like every other command.
+3. **+ New paragraph did nothing** after the first paragraph of a new document was typed. It
+   branched on the committed length in the index, saw the paragraph as still empty, and focused the
+   block that was already focused. Dead exactly once per new document, on the commonest first
+   gesture there is. It flushes and then asks the store.
+
+Also from the same audit and fixed: `appendParagraph` could insert three paragraphs from one
+fat-fingered double tap (the index it read is React state); the editor could open blank over a
+paragraph whose text had not arrived yet, which a blur would then have committed over the writer's
+prose (a window that is real, though it could not be provoked in a headless browser); and the
+reported file size counted UTF-16 code units, understating a Malayalam manuscript threefold.
 
 **Phase 8 — the Download button worked and the file was wrong** (ADR-0036). Reported as "I can't
 download a script which I have edited". The button was there, on the live site, and it produced a
