@@ -107,3 +107,58 @@ export function fileNameStem(title: string): string {
     .replaceAll(/^[-.]+|[-.]+$/g, '')
     .slice(0, 60);
 }
+
+/**
+ * Whether this device can hand a FILE to the OS share sheet.
+ *
+ * This is the route that matters on an iPhone. In standalone display mode —
+ * the app opened from its home-screen icon, which is how this app is meant to
+ * be used — WebKit does not save an `<a download>` to Files, and there is no
+ * address bar or tab strip for it to fall back into, so the tap looks like it
+ * did nothing. `navigator.share` with a file opens the system sheet, from which
+ * "Save to Files" is one more tap and every other app on the phone is available
+ * besides.
+ *
+ * Feature-detected with a real (empty) File, because `canShare` is the only
+ * honest answer to "will this accept a file" — support for sharing *text* says
+ * nothing about support for sharing *files*. No user-agent sniffing anywhere in
+ * this project (ADR-0034).
+ */
+export function canShareFile(): boolean {
+  if (typeof File === 'undefined') return false;
+  if (typeof navigator === 'undefined' || navigator.canShare === undefined) return false;
+  try {
+    return navigator.canShare({ files: [new File([''], 'ezhuthu.txt', { type: 'text/plain' })] });
+  } catch {
+    return false;
+  }
+}
+
+/** `dismissed` is the writer closing the sheet — not a failure, and not silence. */
+export type ShareOutcome = 'shared' | 'dismissed' | 'unavailable';
+
+/**
+ * Hand the document to the OS share sheet as a file.
+ *
+ * A share needs transient user activation, and unlike the clipboard there is no
+ * form that accepts a promise — the text has to be read out of IndexedDB first,
+ * which costs at least one task. WebKit's activation window is generous enough
+ * for a read that takes tens of milliseconds, and where it is not, the refusal
+ * arrives as `NotAllowedError` and the caller falls back rather than pretending.
+ * This is the one path here that cannot be made certain from inside the page.
+ */
+export async function shareTextFile(
+  filename: string,
+  text: string,
+  type = 'text/plain',
+): Promise<ShareOutcome> {
+  if (!canShareFile()) return 'unavailable';
+  try {
+    await navigator.share({ files: [new File([text], filename, { type })], title: filename });
+    return 'shared';
+  } catch (error) {
+    // AbortError is the sheet being closed, which is an answer, not a fault.
+    if (error instanceof DOMException && error.name === 'AbortError') return 'dismissed';
+    return 'unavailable';
+  }
+}

@@ -113,7 +113,7 @@ describe('exporting the document', () => {
   });
 
   it('says nothing rather than a stray newline for an empty document', async () => {
-    expect(await exportDocument(db, DOC)).toEqual({ text: '', blocks: 0, characters: 0 });
+    expect(await exportDocument(db, DOC)).toEqual({ text: '', blocks: 0, characters: 0, bytes: 0 });
   });
 });
 
@@ -136,5 +136,27 @@ describe('the file name', () => {
     const a = documentFilename('', now);
     const b = documentFilename('', now + 61_000);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('the size the app reports', () => {
+  it('is the size of the file on disk, not the length of the string', async () => {
+    // The bug this replaces: `text.length` counts UTF-16 code units, so a
+    // Malayalam manuscript was announced at roughly a third of the size the
+    // phone's Downloads screen would show it at.
+    await insertBlock(db, DOC, 'അവൻ ഒരു എഴുത്തുകാരൻ ആണ്.');
+
+    const { text, characters, bytes } = await exportDocument(db, DOC);
+    expect(bytes).toBe(Buffer.byteLength(text, 'utf8'));
+    expect(characters).toBe([...text].length);
+    expect(bytes).toBeGreaterThan(characters);
+  });
+
+  it('counts characters the way a reader would, not in code units', async () => {
+    // A surrogate pair is one character and two code units.
+    await insertBlock(db, DOC, '😀');
+    const { characters, bytes } = await exportDocument(db, DOC);
+    expect(characters).toBe(2); // the emoji and the trailing newline
+    expect(bytes).toBe(5); // four bytes for the emoji, one for the newline
   });
 });

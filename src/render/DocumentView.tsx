@@ -125,6 +125,12 @@ export interface DocumentViewProps {
    * write either happens or throws (ADR-0037).
    */
   onCopyAll?: () => void;
+  /**
+   * Hand the file to the OS share sheet. Passed only where a file can actually
+   * be shared — on an iPhone this is the route that reaches Files at all
+   * (ADR-0037).
+   */
+  onShare?: () => void;
   ref?: RefObject<DocumentViewHandle | null>;
 }
 
@@ -141,6 +147,7 @@ export function DocumentView({
   feedback = DEFAULT_FEEDBACK,
   onDownload,
   onCopyAll,
+  onShare,
   ref,
 }: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
@@ -914,7 +921,7 @@ export function DocumentView({
         >
           + New paragraph
         </button>
-        {(onDownload !== undefined || onCopyAll !== undefined) && (
+        {(onDownload !== undefined || onCopyAll !== undefined || onShare !== undefined) && (
           <div className="doc-end-actions">
             {onDownload !== undefined && (
               <button
@@ -929,6 +936,11 @@ export function DocumentView({
             {onCopyAll !== undefined && (
               <button type="button" data-testid="copy-document-end" onClick={onCopyAll}>
                 Copy all text
+              </button>
+            )}
+            {onShare !== undefined && (
+              <button type="button" data-testid="share-document-end" onClick={onShare}>
+                Share…
               </button>
             )}
             <p className="note">

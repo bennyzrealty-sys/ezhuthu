@@ -27,9 +27,15 @@ import { pruneSignals } from './signals/queries';
 import { SnapshotScheduler } from './features/timelapse/snapshotting';
 import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
 import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
-import { documentFilename, downloadDocument, exportDocument } from './features/io/export';
+import {
+  documentFilename,
+  downloadDocument,
+  exportDocument,
+  shareDocument,
+} from './features/io/export';
 import { canUndo, undoLast } from './features/undo/apply';
 import { copyDocumentText } from './ui/clipboard';
+import { canShareFile } from './ui/download';
 import {
   DEFAULT_FEEDBACK,
   hapticsSupported,
@@ -110,6 +116,9 @@ export default function App() {
    * the thing in the app is the only copy of the work.
    */
   const [escapeText, setEscapeText] = useState<string | null>(null);
+  // Asked once: the answer cannot change within a page's life, and calling it
+  // on every render constructs a File each time.
+  const [shareable] = useState(canShareFile);
   /*
    * The strip is an opening offer, not a panel. It is shown once per launch —
    * requirement 1 is "on open, return the writer to where he was working" — and
@@ -327,13 +336,13 @@ export default function App() {
     const now = Date.now();
     flushEdits()
       .then((pending) => exportDocument(db, DOC_ID, pending))
-      .then(({ text, blocks, characters }) => {
+      .then(({ text, blocks, bytes }) => {
         if (blocks === 0) {
           setMessage('Nothing to download yet — the document is empty.');
           return;
         }
         const outcome = downloadDocument(documentFilename(status?.doc.title ?? '', now), text);
-        const size = Math.max(1, Math.round(characters / 1024)).toLocaleString();
+        const size = Math.max(1, Math.round(bytes / 1024)).toLocaleString();
         setMessage(
           outcome === 'downloaded'
             ? `Downloaded ${blocks.toLocaleString()} paragraphs (${size} KB) as plain text.`
@@ -389,6 +398,43 @@ export default function App() {
       })
       .finally(() => setBusy(null));
   }, [flushEdits]);
+
+  /*
+   * The route that works on an iPhone (ADR-0037).
+   *
+   * In standalone display mode WebKit will not save an `<a download>` to Files,
+   * and with no address bar and no tab strip there is nowhere for it to fall
+   * back to — the tap simply appears to do nothing. The system share sheet is
+   * the way a file gets off an iPhone, and "Save to Files" is one tap inside it.
+   * Shown only where a file can actually be shared, so it never appears as a
+   * button that cannot work.
+   */
+  const onShare = useCallback(() => {
+    setBusy('Preparing the file…');
+    const now = Date.now();
+    flushEdits()
+      .then((edit) => exportDocument(db, DOC_ID, edit))
+      .then(async ({ text, blocks }) => {
+        if (blocks === 0) {
+          setMessage('Nothing to share yet — the document is empty.');
+          return;
+        }
+        const filename = documentFilename(status?.doc.title ?? '', now);
+        const outcome = await shareDocument(filename, text);
+        if (outcome === 'shared') {
+          setMessage(`Shared ${blocks.toLocaleString()} paragraphs as ${filename}.`);
+        } else if (outcome === 'dismissed') {
+          setMessage('Share cancelled — nothing left the device.');
+        } else {
+          // Refused, or the gesture was spent on the read. Hand the text over
+          // rather than leaving the writer with a button that did nothing.
+          setEscapeText(text);
+          setMessage('This browser would not open the share sheet, so the text is below.');
+        }
+      })
+      .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(null));
+  }, [flushEdits, status?.doc.title]);
 
   const onExportCorpus = useCallback(() => {
     setBusy('Building the corpus…');
@@ -545,6 +591,11 @@ export default function App() {
         >
           Copy all
         </button>
+        {shareable && (
+          <button onClick={onShare} disabled={busy !== null} data-testid="share-document">
+            Share
+          </button>
+        )}
         <button onClick={onExportCorpus} disabled={busy !== null} data-testid="corpus-export">
           Export corpus
         </button>
@@ -772,6 +823,7 @@ export default function App() {
         feedback={feedback}
         onDownload={onDownload}
         onCopyAll={onCopyAll}
+        onShare={shareable ? onShare : undefined}
       />
 
       {/*

@@ -18,13 +18,32 @@
 
 import type { EzhuthuDB } from '../../db/schema';
 import type { DocId } from '../../db/types';
-import { downloadText, fileNameStem, type DownloadOutcome } from '../../ui/download';
+import {
+  downloadText,
+  fileNameStem,
+  shareTextFile,
+  type DownloadOutcome,
+  type ShareOutcome,
+} from '../../ui/download';
 import { joinBlocks } from './import';
 
 export interface DocumentExport {
   text: string;
   blocks: number;
+  /**
+   * Characters as the writer counts them — code points, not UTF-16 code units.
+   */
   characters: number;
+  /**
+   * The size of the file that will actually arrive.
+   *
+   * Not `text.length`. Malayalam is three bytes per character in UTF-8, so
+   * reporting code units understated a 600 KB manuscript as about 195 KB —
+   * and to someone whose complaint is "my script did not come out whole", a
+   * number that disagrees with the phone's Downloads screen by threefold is
+   * worse than no number.
+   */
+  bytes: number;
 }
 
 /**
@@ -82,7 +101,12 @@ export async function exportDocument(
     });
 
   const text = texts.length === 0 ? '' : joinBlocks(texts);
-  return { text, blocks: texts.length, characters: text.length };
+  return {
+    text,
+    blocks: texts.length,
+    characters: [...text].length,
+    bytes: new TextEncoder().encode(text).length,
+  };
 }
 
 /**
@@ -101,4 +125,9 @@ export function downloadDocument(filename: string, text: string): DownloadOutcom
   // charset=utf-8 is not decoration: without it a phone's viewer may guess
   // Latin-1 at a file that is entirely Malayalam.
   return downloadText(filename, text, 'text/plain;charset=utf-8');
+}
+
+/** The same file, handed to the OS share sheet instead of the download path. */
+export function shareDocument(filename: string, text: string): Promise<ShareOutcome> {
+  return shareTextFile(filename, text, 'text/plain');
 }
