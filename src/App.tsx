@@ -29,6 +29,7 @@ import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
 import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
 import { documentFilename, downloadDocument, exportDocument } from './features/io/export';
 import { canUndo, undoLast } from './features/undo/apply';
+import { copyDocumentText } from './ui/clipboard';
 import {
   DEFAULT_FEEDBACK,
   hapticsSupported,
@@ -101,6 +102,14 @@ export default function App() {
   const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
   const { availability: installable, promptInstall } = useInstall();
   const [installHelp, setInstallHelp] = useState(false);
+  /*
+   * The last resort. If every clipboard route is refused — some in-app browser
+   * views refuse all three — the writing is put in a field, selected, with the
+   * two words of instruction that turn it into a copy the writer can make by
+   * hand. A button that says "could not copy" and stops is not an answer when
+   * the thing in the app is the only copy of the work.
+   */
+  const [escapeText, setEscapeText] = useState<string | null>(null);
   /*
    * The strip is an opening offer, not a panel. It is shown once per launch —
    * requirement 1 is "on open, return the writer to where he was working" — and
@@ -337,6 +346,50 @@ export default function App() {
       .finally(() => setBusy(null));
   }, [flushEdits, status?.doc.title]);
 
+  /*
+   * The whole document on the clipboard, in one tap (ADR-0037).
+   *
+   * Note what is NOT awaited here. `copyDocumentText` is handed a *promise* of
+   * the text and called synchronously from the click, because a clipboard write
+   * is only permitted while the browser still considers the gesture live, and
+   * on WebKit that does not survive an `await`. Reading the document first and
+   * copying second is the version that works on this desktop and fails on the
+   * phone. See src/ui/clipboard.ts.
+   */
+  const onCopyAll = useCallback(() => {
+    setBusy('Copying…');
+    const pending = flushEdits()
+      .then((edit) => exportDocument(db, DOC_ID, edit))
+      .then((result) => {
+        if (result.blocks === 0) throw new Error('empty');
+        return result.text;
+      });
+
+    copyDocumentText(pending)
+      .then(({ outcome, text }) => {
+        const letters = [...text].length.toLocaleString();
+        if (outcome === 'copied') {
+          setEscapeText(null);
+          setMessage(`Copied the whole document — ${letters} characters. Paste it anywhere.`);
+          return;
+        }
+        // Refused everywhere. Hand it over to be copied by hand rather than
+        // reporting a failure and leaving the writer with nothing.
+        setEscapeText(text);
+        setMessage('This browser refused the clipboard, so the text is below — it is already selected.');
+      })
+      .catch((e: unknown) => {
+        setMessage(
+          e instanceof Error && e.message === 'empty'
+            ? 'Nothing to copy yet — the document is empty.'
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
+      })
+      .finally(() => setBusy(null));
+  }, [flushEdits]);
+
   const onExportCorpus = useCallback(() => {
     setBusy('Building the corpus…');
     const now = Date.now();
@@ -484,6 +537,14 @@ export default function App() {
         >
           Download
         </button>
+        <button
+          onClick={onCopyAll}
+          disabled={busy !== null}
+          data-testid="copy-document"
+          title="Put the whole document on the clipboard"
+        >
+          Copy all
+        </button>
         <button onClick={onExportCorpus} disabled={busy !== null} data-testid="corpus-export">
           Export corpus
         </button>
@@ -516,6 +577,32 @@ export default function App() {
         <p className="note" style={{ padding: '0 1rem' }} data-testid="message" aria-live="polite">
           {message}
         </p>
+      )}
+
+      {escapeText !== null && (
+        <div style={{ padding: '0 1rem' }}>
+          <section className="card" data-testid="copy-escape">
+            <h2>Copy it by hand</h2>
+            <p className="note">
+              Every paragraph is in the box below and it is already selected. Long-press it and
+              choose Copy, or press Ctrl/Cmd+C.
+            </p>
+            <textarea
+              className="copy-escape-field"
+              data-testid="copy-escape-field"
+              readOnly
+              value={escapeText}
+              ref={(field) => {
+                // Selected on mount, so the only remaining step is Copy.
+                if (field !== null) {
+                  field.focus({ preventScroll: true });
+                  field.setSelectionRange(0, field.value.length);
+                }
+              }}
+            />
+            <button onClick={() => setEscapeText(null)}>Close</button>
+          </section>
+        </div>
       )}
 
       {installHelp && installable !== 'installed' && (
@@ -684,6 +771,7 @@ export default function App() {
         onChange={onDocumentChange}
         feedback={feedback}
         onDownload={onDownload}
+        onCopyAll={onCopyAll}
       />
 
       {/*

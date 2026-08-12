@@ -118,6 +118,13 @@ export interface DocumentViewProps {
    * someone looking straight at it. Absent means the affordance is not shown.
    */
   onDownload?: () => void;
+  /**
+   * Put the whole document on the clipboard. Beside Download rather than
+   * behind it: a download can fail in ways an installed PWA cannot report —
+   * no address bar, no tab strip, no visible Downloads shelf — and a clipboard
+   * write either happens or throws (ADR-0037).
+   */
+  onCopyAll?: () => void;
   ref?: RefObject<DocumentViewHandle | null>;
 }
 
@@ -133,6 +140,7 @@ export function DocumentView({
   now,
   feedback = DEFAULT_FEEDBACK,
   onDownload,
+  onCopyAll,
   ref,
 }: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
@@ -906,18 +914,26 @@ export function DocumentView({
         >
           + New paragraph
         </button>
-        {onDownload !== undefined && (
+        {(onDownload !== undefined || onCopyAll !== undefined) && (
           <div className="doc-end-actions">
-            <button
-              type="button"
-              className="primary"
-              data-testid="download-document-end"
-              onClick={onDownload}
-            >
-              Download this writing
-            </button>
+            {onDownload !== undefined && (
+              <button
+                type="button"
+                className="primary"
+                data-testid="download-document-end"
+                onClick={onDownload}
+              >
+                Download this writing
+              </button>
+            )}
+            {onCopyAll !== undefined && (
+              <button type="button" data-testid="copy-document-end" onClick={onCopyAll}>
+                Copy all text
+              </button>
+            )}
             <p className="note">
-              A plain .txt file of every paragraph above, saved to this device.
+              Every paragraph above — as a plain .txt file on this device, or on the clipboard to
+              paste anywhere.
             </p>
           </div>
         )}
