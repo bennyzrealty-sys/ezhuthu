@@ -27,6 +27,7 @@ import { pruneSignals } from './signals/queries';
 import { SnapshotScheduler } from './features/timelapse/snapshotting';
 import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
 import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
+import { documentFilename, downloadDocument, exportDocument } from './features/io/export';
 import { canUndo, undoLast } from './features/undo/apply';
 import {
   DEFAULT_FEEDBACK,
@@ -275,6 +276,33 @@ export default function App() {
    * Never automatic and never uploaded. This writes a file to the device and
    * does nothing else.
    */
+  /*
+   * The document, as a file the writer can read, send, or open anywhere —
+   * the same plain-text format Import accepts, so it round-trips.
+   *
+   * Distinct from the two exports that already existed and which nobody asked
+   * for by this name: Back up writes the event log as JSON (a restore file),
+   * and Export corpus writes revision pairs, which are deliberately empty for
+   * a document that has only been written (ADR-0030).
+   */
+  const onDownload = useCallback(() => {
+    setBusy('Preparing the file…');
+    const now = Date.now();
+    exportDocument(db, DOC_ID)
+      .then(({ text, blocks, characters }) => {
+        if (blocks === 0) {
+          setMessage('Nothing to download yet — the document is empty.');
+          return;
+        }
+        downloadDocument(documentFilename(status?.doc.title ?? '', now), text);
+        setMessage(
+          `Downloaded ${blocks.toLocaleString()} paragraphs (${Math.max(1, Math.round(characters / 1024)).toLocaleString()} KB) as plain text.`,
+        );
+      })
+      .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(null));
+  }, [status?.doc.title]);
+
   const onExportCorpus = useCallback(() => {
     setBusy('Building the corpus…');
     const now = Date.now();
@@ -408,6 +436,9 @@ export default function App() {
         </button>
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
+        </button>
+        <button onClick={onDownload} disabled={busy !== null} data-testid="download-document">
+          Download
         </button>
         <button onClick={onExportCorpus} disabled={busy !== null} data-testid="corpus-export">
           Export corpus
