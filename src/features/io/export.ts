@@ -18,7 +18,7 @@
 
 import type { EzhuthuDB } from '../../db/schema';
 import type { DocId } from '../../db/types';
-import { downloadText, fileNameStem } from '../../ui/download';
+import { downloadText, fileNameStem, type DownloadOutcome } from '../../ui/download';
 import { joinBlocks } from './import';
 
 export interface DocumentExport {
@@ -97,8 +97,8 @@ export function documentFilename(title: string, now: number): string {
   return stem === '' ? `ezhuthu-${stamp}.txt` : `ezhuthu-${stem}-${stamp}.txt`;
 }
 
-export function downloadDocument(filename: string, text: string): void {
+export function downloadDocument(filename: string, text: string): DownloadOutcome {
   // charset=utf-8 is not decoration: without it a phone's viewer may guess
   // Latin-1 at a file that is entirely Malayalam.
-  downloadText(filename, text, 'text/plain;charset=utf-8');
+  return downloadText(filename, text, 'text/plain;charset=utf-8');
 }

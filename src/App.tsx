@@ -314,9 +314,14 @@ export default function App() {
           setMessage('Nothing to download yet — the document is empty.');
           return;
         }
-        downloadDocument(documentFilename(status?.doc.title ?? '', now), text);
+        const outcome = downloadDocument(documentFilename(status?.doc.title ?? '', now), text);
+        const size = Math.max(1, Math.round(characters / 1024)).toLocaleString();
         setMessage(
-          `Downloaded ${blocks.toLocaleString()} paragraphs (${Math.max(1, Math.round(characters / 1024)).toLocaleString()} KB) as plain text.`,
+          outcome === 'downloaded'
+            ? `Downloaded ${blocks.toLocaleString()} paragraphs (${size} KB) as plain text.`
+            : `This browser will not save a file directly, so the writing has opened in a ` +
+              `new tab — use its share or save control to keep it. ` +
+              `${blocks.toLocaleString()} paragraphs (${size} KB).`,
         );
       })
       .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))

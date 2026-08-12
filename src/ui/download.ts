@@ -12,28 +12,71 @@
  * lands as "download" with no extension — which is what a backup of someone's
  * manuscript must never be called.
  *
- * The object URL is revoked on a later task, not on the next line. Revoking
- * synchronously after `click()` races the fetch the click just started, and
- * loses it often enough to be reported as "the export button does nothing".
+ * The object URL is revoked on a later task, not on the next line — and the
+ * anchor is removed on that same later task rather than immediately. Revoking
+ * or detaching synchronously after `click()` races the fetch the click just
+ * started, and loses it often enough to be reported as "the export button does
+ * nothing". A zero-delay timeout is enough for Chromium and is not enough
+ * everywhere: the save can still be in flight a second later, and the URL costs
+ * nothing to keep until then.
+ *
+ * And where the `download` attribute is not honoured at all, the file is opened
+ * instead of saved, and the caller is told which happened — see `DownloadOutcome`.
  */
 
-export function downloadBlob(filename: string, blob: Blob): void {
+/** How far the browser got. `opened` means the writer still has to save it. */
+export type DownloadOutcome = 'downloaded' | 'opened';
+
+/**
+ * Long enough for a save that has not finished starting. The URL is a handle to
+ * a blob already in memory, so holding it costs nothing that closing the tab
+ * does not reclaim.
+ */
+const REVOKE_AFTER_MS = 60_000;
+
+/**
+ * Whether this browser will save an anchor's target to a file rather than
+ * navigating to it.
+ *
+ * Feature-detected rather than sniffed. Where it is absent — older WebKit, and
+ * the in-app browser views links from a messaging app actually open in — a
+ * click on a `download` anchor navigates instead, and in a standalone PWA with
+ * no address bar and no tabs that can look exactly like nothing happening.
+ */
+function savesToFile(): boolean {
+  return typeof HTMLAnchorElement !== 'undefined' && 'download' in HTMLAnchorElement.prototype;
+}
+
+export function downloadBlob(filename: string, blob: Blob): DownloadOutcome {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = filename;
   anchor.rel = 'noopener';
   anchor.style.display = 'none';
 
+  const outcome: DownloadOutcome = savesToFile() ? 'downloaded' : 'opened';
+  if (outcome === 'downloaded') {
+    anchor.download = filename;
+  } else {
+    // Nothing here can save the file, so put it where the writer can: a tab
+    // showing their text, which every platform can then share or save from.
+    // Better than a button that silently does nothing.
+    anchor.target = '_blank';
+  }
+
   document.body.append(anchor);
   anchor.click();
-  anchor.remove();
 
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, REVOKE_AFTER_MS);
+
+  return outcome;
 }
 
-export function downloadText(filename: string, text: string, type: string): void {
-  downloadBlob(filename, new Blob([text], { type }));
+export function downloadText(filename: string, text: string, type: string): DownloadOutcome {
+  return downloadBlob(filename, new Blob([text], { type }));
 }
 
 /**
