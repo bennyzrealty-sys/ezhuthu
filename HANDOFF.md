@@ -253,6 +253,18 @@ the same suite reported before Phase 7 landed.
 | Corpus export, 1,563 blocks | < 5 s | **57–66 ms** | — |
 | Blocks in DOM | — | **12** of 1,563 | 12 |
 
+**Re-measured after the egress work (ADR-0036, ADR-0037), same container, perf suite serial:**
+cold open 153 ms · keystroke handler **0.76 ms median, 1.07 ms p95** · frame p95 while typing
+17.0 ms · scroll p95 17.1 ms · memory 4.9 MB · search miss 71 ms scan · search 1,064 matches
+112 ms · time-lapse open 137 ms, scrub 53 ms · corpus export 64 ms. All eight budgets pass. The
+keystroke path is what mattered — `BlockEditor` grew an unmount commit and a `handedOver` ref, and
+neither is on the typing path — and it is unchanged against the 0.68–0.73 / 0.88–0.95 above.
+
+One caution, learned again the hard way: an earlier run of this suite reported the search scan at
+**554 ms** against a 250 ms budget, and it was contention — the e2e suite was running at the same
+time. Re-run alone it was 71 ms. `fullyParallel: false` on the perf project is not enough if
+something *else* is on the machine.
+
 **Nothing regressed when the three phases came together**, which was the question the merge
 raised: the margin bar, the minimap and the resume strip all read the index the virtualiser
 already holds, and time-lapse is a Worker that does not exist until the panel opens.
