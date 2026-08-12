@@ -198,6 +198,16 @@ test('typing survives the app being put away before the commit timer', async ({ 
     document.dispatchEvent(new Event('visibilitychange'));
   });
 
+  /*
+   * Wait for the append rather than reloading straight into it. The flush is
+   * fire-and-forget by nature — nothing can await a page that is being frozen —
+   * so a reload on the next line races the transaction and the test fails on a
+   * busy machine while the app is behaving correctly. The word count is the
+   * observable end of that write: it is recomputed inside the same append
+   * transaction and reported through `onChange`.
+   */
+  await expect(page.locator('.doc-toolbar .stat')).toContainText('3 words');
+
   await page.reload();
   await expect(page.locator('.block-row').first()).toContainText('നഷ്ടപ്പെടരുത്');
 });
