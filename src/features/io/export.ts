@@ -18,13 +18,53 @@
 
 import type { EzhuthuDB } from '../../db/schema';
 import type { DocId } from '../../db/types';
-import { downloadText, fileNameStem } from '../../ui/download';
+import {
+  downloadText,
+  fileNameStem,
+  shareTextFile,
+  type DownloadOutcome,
+  type ShareOutcome,
+} from '../../ui/download';
 import { joinBlocks } from './import';
 
 export interface DocumentExport {
   text: string;
   blocks: number;
+  /**
+   * Characters as the writer counts them — code points, not UTF-16 code units.
+   */
   characters: number;
+  /**
+   * The size of the file that will actually arrive.
+   *
+   * Not `text.length`. Malayalam is three bytes per character in UTF-8, so
+   * reporting code units understated a 600 KB manuscript as about 195 KB —
+   * and to someone whose complaint is "my script did not come out whole", a
+   * number that disagrees with the phone's Downloads screen by threefold is
+   * worse than no number.
+   */
+  bytes: number;
+}
+
+/**
+ * A paragraph the writer is in the middle of, which the store does not have yet.
+ *
+ * The editor holds the focused paragraph's text in a ref and commits it after
+ * 400ms of quiet, so that typing costs no render. Everything here reads the
+ * `blocks` projection, and a download taken while the writer is still typing
+ * therefore misses the current sentence — or, for a paragraph begun and
+ * downloaded in the same breath, produces a file with an empty line where the
+ * writing is. That is the reported bug: "I downloaded my script and my edit was
+ * not in it."
+ *
+ * The caller (App) asks the view to commit before exporting, so in practice
+ * this override is already in the store by the time it arrives. It is still
+ * passed, because the one case a commit is refused — an IME mid-word (rule 6,
+ * ADR-0010) — is exactly the case a Malayalam writer is most likely to be in.
+ */
+export interface PendingEdit {
+  blockId: string;
+  text: string;
 }
 
 /**
@@ -43,18 +83,30 @@ export interface DocumentExport {
  * export, and it is bounded by the document rather than by history: 100k words
  * of Malayalam is on the order of a megabyte.
  */
-export async function exportDocument(db: EzhuthuDB, docId: DocId): Promise<DocumentExport> {
+export async function exportDocument(
+  db: EzhuthuDB,
+  docId: DocId,
+  pending?: PendingEdit | null,
+): Promise<DocumentExport> {
   const texts: string[] = [];
 
   await db.blocks
     .where('[docId+order]')
     .between([docId, ''], [docId, '￿'])
     .each((block) => {
-      if (block.deletedAt === undefined) texts.push(block.text);
+      if (block.deletedAt !== undefined) return;
+      texts.push(
+        pending != null && pending.blockId === block.blockId ? pending.text : block.text,
+      );
     });
 
   const text = texts.length === 0 ? '' : joinBlocks(texts);
-  return { text, blocks: texts.length, characters: text.length };
+  return {
+    text,
+    blocks: texts.length,
+    characters: [...text].length,
+    bytes: new TextEncoder().encode(text).length,
+  };
 }
 
 /**
@@ -69,8 +121,13 @@ export function documentFilename(title: string, now: number): string {
   return stem === '' ? `ezhuthu-${stamp}.txt` : `ezhuthu-${stem}-${stamp}.txt`;
 }
 
-export function downloadDocument(filename: string, text: string): void {
+export function downloadDocument(filename: string, text: string): DownloadOutcome {
   // charset=utf-8 is not decoration: without it a phone's viewer may guess
   // Latin-1 at a file that is entirely Malayalam.
-  downloadText(filename, text, 'text/plain;charset=utf-8');
+  return downloadText(filename, text, 'text/plain;charset=utf-8');
+}
+
+/** The same file, handed to the OS share sheet instead of the download path. */
+export function shareDocument(filename: string, text: string): Promise<ShareOutcome> {
+  return shareTextFile(filename, text, 'text/plain');
 }

@@ -1008,3 +1008,41 @@ mark,
   padding: 0.3rem 0.7rem;
   font-size: 0.85rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Getting the writing out (ADR-0036)
+   --------------------------------------------------------------------------- */
+
+/* The end of the document is where a writer stops and wants the file. The
+   toolbar's Download is sticky and always reachable, but it is one of ten
+   identically weighted buttons; this one is where the hand already is. */
+.doc-end-actions {
+  max-width: var(--measure);
+  margin: 0 auto 4rem;
+  padding: 0 1rem;
+  text-align: center;
+}
+
+.doc-end-actions button {
+  min-height: 44px;
+  padding: 0.7rem 1.4rem;
+  margin: 0 0.3rem 0.5rem;
+}
+
+.doc-end-actions .note {
+  margin-top: 0.5rem;
+}
+
+/* The copy-by-hand escape (ADR-0037). Shown only when every clipboard route
+   has been refused, so it is worth the space when it appears. 16px minimum, or
+   iOS zooms the viewport the moment it takes focus. */
+.copy-escape-field {
+  display: block;
+  width: 100%;
+  min-height: 8rem;
+  max-height: 40dvh;
+  margin: 0.5rem 0;
+  font-size: 16px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}

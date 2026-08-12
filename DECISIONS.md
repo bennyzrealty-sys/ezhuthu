@@ -1561,3 +1561,167 @@ real `public/sw.js` so the markers cannot be edited away unnoticed.
   content-addressed), so returning readers are not made to re-fetch an unchanged shell.
 - The dev fallback block means `public/sw.js` in the repository is not what ships; the built copy
   differs by exactly the marked block. Anyone reading the deployed worker sees the real list.
+
+---
+
+## ADR-0036 — A command that reads the whole document commits the paragraph being typed first
+
+**Status:** accepted
+
+**Context.** "I cannot download the script I edited." The Download button existed, it was on the
+live site, it worked, and the file it produced did not contain the writer's edit — and when the
+paragraph had been *started* in the same minute, the file contained an empty line where the
+writing was.
+
+The cause is the seam that makes typing free. `BlockEditor` holds the focused paragraph's text in
+a ref and commits it after `IDLE_COMMIT_MS` (400ms) of quiet, so that a keystroke stores a string
+and returns (docs/PERFORMANCE.md). Everything else in the app reads committed state: the `blocks`
+projection, or the event log. For 400ms after every keystroke, therefore, the paragraph under the
+caret is one the rest of the app cannot see. Download, Back up and Export corpus all read the
+whole document, and all three read it from there.
+
+This was invisible for two reasons, and both are worth naming because they will hide the next one
+too. First, **every test blurred the field and then waited for the text to appear in the
+read-only row** — which is to say, waited for the commit — so no suite could reach the state. A
+person types and taps. Second, **on the browsers the suites run in, tapping a button moves focus
+to it**, the editor's own `blur` commits, and the ordering happens to come out right. Safari and
+iOS do not focus a button on tap. Nothing blurred, nothing committed, and the file was written
+from state the writer had already moved past. The feature was correct on the machine that tested
+it and wrong on the device it was built for.
+
+Looking for it turned up the same seam costing more than a bad file: nothing flushed the draft
+when the app was **backgrounded**. A writer who typed a line and swiped to the home screen inside
+those 400ms lost it, permanently — while `signals/collector.ts` had flushed *telemetry about the
+writing* on `visibilitychange` since Phase 4.
+
+**Decision.** The draft is not private to the editor any more. `BlockEditor` exposes
+`flush()`, which hands over the field's current value and stands the idle timer down. It does not
+write: the caller owns the append path and has to be able to await it.
+
+1. **Every whole-document command flushes first.** Download, Back up and Export corpus call
+   `DocumentViewHandle.flushPendingEdit()` and **await** it before reading. The edit is committed
+   through the ordinary append path — one event, one block, rule 1 — so the flush makes the
+   writing durable rather than only making the file right.
+2. **`visibilitychange` and `pagehide` flush too.** The manuscript gets at least the guarantee its
+   telemetry already had.
+3. **A refused commit still produces a correct file.** The one case a commit cannot happen is an
+   IME mid-word (rule 6, ADR-0010) — the case a Malayalam writer is most often in. `flush` reports
+   `composing`, no commit is attempted, and the draft is passed to `exportDocument` as a
+   `PendingEdit` overriding that block's stored text. Rule 6 is about not corrupting the *input*;
+   it says nothing about what a file should contain, and the file must show what is on screen.
+
+**Alternatives considered.**
+
+- *Commit on every keystroke.* Deletes the seam and the 16ms budget with it, and writes an event
+  per character into a permanent log.
+- *Commit during composition anyway.* Directly against rule 6. The override exists so that the
+  refusal costs nothing visible.
+- *Let the editor's `blur` keep carrying this.* It is what the app was already relying on, and it
+  is a side effect of focus behaviour that differs by platform. The correctness of a download
+  should not depend on whether a browser focuses buttons.
+- *Read the DOM at export time.* The focused field is one of ~12 rendered rows out of thousands;
+  the document is not in the DOM. Only the editor knows the draft.
+
+**Consequences.**
+
+- Download, Back up and Export corpus are each one `await` slower — a single append.
+- A pending edit reaches `exportDocument` as data (`PendingEdit`), so the pure export stays
+  testable without a React tree, and the composing path is covered by unit tests.
+- `visibilitychange` now writes to the log. It is one append for one block on a path that
+  previously wrote only telemetry; if a future flush there grows into anything that scales with
+  document size, this is where to look.
+- The tests for this feature must activate the button **without** letting focus leave the field,
+  or they are testing the browser's focus behaviour rather than the app. `tests/e2e/download.spec.ts`
+  does this deliberately and says so.
+
+---
+
+## ADR-0037 — There is more than one way out of the app, and the clipboard is the one that cannot be blocked
+
+**Status:** accepted
+
+**Context.** The download was fixed (ADR-0036) and the report came back: *still* no way to get the
+script off the phone. The bug in ADR-0036 was real and it was not the whole answer, because the
+remaining half is not in our code at all.
+
+**On iOS, in standalone display mode — the app opened from its home-screen icon, which is how this
+app is meant to be used — WebKit does not save an `<a download>` to a file.** This is longstanding
+intended behaviour rather than a bug we can work around from inside the page (WebKit 275288 records
+the same symptom). And a standalone PWA has no address bar and no tab strip, so the fallback of
+"navigate to the blob and let the user save it" has nowhere to go. The tap looks exactly like a
+button that does nothing. Everything in ADR-0031 about the `download` attribute is still true; it
+is simply not consulted.
+
+So the app needs a route out that does not depend on the browser having somewhere to put a file.
+A clipboard write either succeeds or throws.
+
+**The hard part is not the clipboard, it is *when*.** The text does not exist when the tap happens
+— it has to be read out of IndexedDB — and a clipboard write is permitted only while the browser
+still considers the user's gesture live. Chromium keeps that across an `await`; WebKit does not. So
+
+```
+const text = await readTheDocument();      // activation is spent here
+await navigator.clipboard.writeText(text); // NotAllowedError
+```
+
+works on every machine this is developed and tested on and fails on the one device it is for. That
+is the same shape as ADR-0036's bug, one layer down, and it is why this is an ADR rather than three
+lines at a call site.
+
+**Decision.**
+
+1. **Copy is a first-class way out, beside Download rather than behind it.** `Copy all` in the
+   toolbar and `Copy all text` at the end of the document, over the same `exportDocument` string
+   the file is built from — so the two routes cannot disagree.
+2. **The write is registered synchronously inside the gesture and handed a Promise.**
+   `copyDocumentText` takes a `Promise<string>`, not a string, and calls
+   `navigator.clipboard.write([new ClipboardItem({'text/plain': blobPromise}))]` before awaiting
+   anything. The asynchronous `ClipboardItem` form exists for exactly this; WebKit shipped it so a
+   payload could be produced after the gesture. `tests/e2e/copy.spec.ts` asserts the ordering
+   without timing, using a flag flipped from a `setTimeout` — an IndexedDB read always completes in
+   a later task, so a "simplification" back to the broken shape fails the test.
+3. **Three routes, then the floor.** Async `ClipboardItem` → `writeText` → `document.execCommand`
+   (which needs no permission, which is why it is last rather than dropped) → and if all three are
+   refused, the writing is put in a selected field with two words of instruction. A button that
+   reports failure is not an answer when the thing in the app is the only copy of the work.
+4. **Share is offered where a file can actually be shared.** `navigator.canShare({files})` is
+   feature-detected with a real `File` — no user-agent sniffing (ADR-0034) — and where it is true
+   the sheet is the route to "Save to Files" on an iPhone. Unlike the clipboard there is no
+   promise-taking form, so this one path genuinely cannot be made certain from inside the page: if
+   the activation is spent the refusal arrives as `NotAllowedError` and the writer gets the text
+   instead.
+5. **Rule 9 is not weakened.** "Nothing leaves the device" is about *us* — no network call for user
+   data, no analytics, no telemetry. The clipboard is the device's. The share sheet is the writer
+   choosing, in an OS dialog, where their own writing goes. Neither is egress performed by this
+   app, and there is still no upload path to review because there is no upload path.
+
+This also discharges the last outstanding mitigation in ADR-0011, which named "copy document"
+among the affordances that would make whole-block-only selection acceptable and had never been
+built.
+
+**Alternatives considered.**
+
+- *Read the document first, then copy.* The broken shape. Works everywhere except the target.
+- *Hold the exported text in memory so the tap is synchronous.* Would make Share reliable too, but
+  it means keeping the whole manuscript resident and invalidating it on every keystroke — against
+  the performance rules for a benefit the `ClipboardItem` form already gives the clipboard.
+- *Drop `execCommand`.* It is deprecated and it is the only route in some in-app browser views.
+- *Sniff for iOS and show a different button.* No user-agent sniffing (ADR-0034), and it would be
+  wrong the first time either platform changed.
+
+**Consequences.**
+
+- Two egress routes to keep in step. They share `exportDocument`, so a fidelity test over one
+  covers the string in both; `tests/unit/exportFidelity.test.ts` asserts that string against the
+  documented Malayalam forms, surrogate pairs and a 1,500-paragraph document.
+- Reported sizes changed with this: `characters` is code points and `bytes` is the UTF-8 length of
+  the file. `text.length` was UTF-16 code units, which understated a Malayalam manuscript
+  threefold — a number that disagrees with the phone's Downloads screen undermines exactly the
+  claim being made.
+- The clipboard escape hatch renders the whole document into a `<textarea>`. That is a deliberate
+  whole-document read in the UI, like the export itself, and it happens only when three routes have
+  already failed.
+- **What cannot be verified here.** Playwright cannot drive iOS, so the claim that the
+  `ClipboardItem` promise form survives WebKit's activation check after our read is reasoned from
+  the API's purpose, not measured. The device checklist in `HANDOFF.md` names the checks that must
+  be run by hand.

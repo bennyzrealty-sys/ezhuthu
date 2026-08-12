@@ -27,8 +27,15 @@ import { pruneSignals } from './signals/queries';
 import { SnapshotScheduler } from './features/timelapse/snapshotting';
 import { TimelapsePanel } from './features/timelapse/TimelapsePanel';
 import { corpusFilename, downloadCorpus, exportCorpus } from './features/io/corpus/export';
-import { documentFilename, downloadDocument, exportDocument } from './features/io/export';
+import {
+  documentFilename,
+  downloadDocument,
+  exportDocument,
+  shareDocument,
+} from './features/io/export';
 import { canUndo, undoLast } from './features/undo/apply';
+import { copyDocumentText } from './ui/clipboard';
+import { canShareFile } from './ui/download';
 import {
   DEFAULT_FEEDBACK,
   hapticsSupported,
@@ -101,6 +108,17 @@ export default function App() {
   const [feedback, setFeedback] = useState<FeedbackSettings>(DEFAULT_FEEDBACK);
   const { availability: installable, promptInstall } = useInstall();
   const [installHelp, setInstallHelp] = useState(false);
+  /*
+   * The last resort. If every clipboard route is refused — some in-app browser
+   * views refuse all three — the writing is put in a field, selected, with the
+   * two words of instruction that turn it into a copy the writer can make by
+   * hand. A button that says "could not copy" and stops is not an answer when
+   * the thing in the app is the only copy of the work.
+   */
+  const [escapeText, setEscapeText] = useState<string | null>(null);
+  // Asked once: the answer cannot change within a page's life, and calling it
+  // on every render constructs a File each time.
+  const [shareable] = useState(canShareFile);
   /*
    * The strip is an opening offer, not a panel. It is shown once per launch —
    * requirement 1 is "on open, return the writer to where he was working" — and
@@ -176,8 +194,36 @@ export default function App() {
     snapshots.current?.request();
   }, [refresh, refreshUndo]);
 
+  /*
+   * Commit whatever the writer is in the middle of typing, before anything
+   * reads the document as a whole.
+   *
+   * Download, Back up and Export corpus all read committed state — the `blocks`
+   * projection or the event log — and the paragraph under the caret is in
+   * neither for up to `IDLE_COMMIT_MS` after the last keystroke (ADR-0036). On
+   * the browsers where tapping a button moves focus, the editor's own blur
+   * happened to commit first and this was invisible; on the ones where it does
+   * not (Safari and iOS do not focus a button on tap), the file arrived without
+   * the writer's most recent work, and a paragraph begun and downloaded in the
+   * same breath arrived EMPTY.
+   *
+   * Awaited, so the append has committed before the read starts.
+   */
+  const flushEdits = useCallback(async () => {
+    return (await view.current?.flushPendingEdit()) ?? null;
+  }, []);
+
   const onUndo = useCallback(() => {
-    undoLast(db, DOC_ID)
+    /*
+     * Flush first, like every other command that reads committed state.
+     * `undoLast` reads the tail of the event log, which by construction cannot
+     * contain the paragraph being typed — so an undo pressed inside the 400ms
+     * window reversed an OLDER, unrelated edit, and the reload that follows
+     * threw the current sentence away. Both halves silently, under a success
+     * message.
+     */
+    flushEdits()
+      .then(() => undoLast(db, DOC_ID))
       .then((outcome) => {
         if (outcome.refused === 'not-reversible') {
           setMessage('That change cannot be undone.');
@@ -195,7 +241,7 @@ export default function App() {
         refreshUndo();
       })
       .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
-  }, [refresh, refreshUndo]);
+  }, [flushEdits, refresh, refreshUndo]);
 
   /*
    * Signals older than the retention window have no reader — the queries ask
@@ -288,25 +334,113 @@ export default function App() {
   const onDownload = useCallback(() => {
     setBusy('Preparing the file…');
     const now = Date.now();
-    exportDocument(db, DOC_ID)
-      .then(({ text, blocks, characters }) => {
+    flushEdits()
+      .then((pending) => exportDocument(db, DOC_ID, pending))
+      .then(({ text, blocks, bytes }) => {
         if (blocks === 0) {
           setMessage('Nothing to download yet — the document is empty.');
           return;
         }
-        downloadDocument(documentFilename(status?.doc.title ?? '', now), text);
+        const outcome = downloadDocument(documentFilename(status?.doc.title ?? '', now), text);
+        const size = Math.max(1, Math.round(bytes / 1024)).toLocaleString();
         setMessage(
-          `Downloaded ${blocks.toLocaleString()} paragraphs (${Math.max(1, Math.round(characters / 1024)).toLocaleString()} KB) as plain text.`,
+          outcome === 'downloaded'
+            ? `Downloaded ${blocks.toLocaleString()} paragraphs (${size} KB) as plain text.`
+            : `This browser will not save a file directly, so the writing has opened in a ` +
+              `new tab — use its share or save control to keep it. ` +
+              `${blocks.toLocaleString()} paragraphs (${size} KB).`,
         );
       })
       .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(null));
-  }, [status?.doc.title]);
+  }, [flushEdits, status?.doc.title]);
+
+  /*
+   * The whole document on the clipboard, in one tap (ADR-0037).
+   *
+   * Note what is NOT awaited here. `copyDocumentText` is handed a *promise* of
+   * the text and called synchronously from the click, because a clipboard write
+   * is only permitted while the browser still considers the gesture live, and
+   * on WebKit that does not survive an `await`. Reading the document first and
+   * copying second is the version that works on this desktop and fails on the
+   * phone. See src/ui/clipboard.ts.
+   */
+  const onCopyAll = useCallback(() => {
+    setBusy('Copying…');
+    const pending = flushEdits()
+      .then((edit) => exportDocument(db, DOC_ID, edit))
+      .then((result) => {
+        if (result.blocks === 0) throw new Error('empty');
+        return result.text;
+      });
+
+    copyDocumentText(pending)
+      .then(({ outcome, text }) => {
+        const letters = [...text].length.toLocaleString();
+        if (outcome === 'copied') {
+          setEscapeText(null);
+          setMessage(`Copied the whole document — ${letters} characters. Paste it anywhere.`);
+          return;
+        }
+        // Refused everywhere. Hand it over to be copied by hand rather than
+        // reporting a failure and leaving the writer with nothing.
+        setEscapeText(text);
+        setMessage('This browser refused the clipboard, so the text is below — it is already selected.');
+      })
+      .catch((e: unknown) => {
+        setMessage(
+          e instanceof Error && e.message === 'empty'
+            ? 'Nothing to copy yet — the document is empty.'
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
+      })
+      .finally(() => setBusy(null));
+  }, [flushEdits]);
+
+  /*
+   * The route that works on an iPhone (ADR-0037).
+   *
+   * In standalone display mode WebKit will not save an `<a download>` to Files,
+   * and with no address bar and no tab strip there is nowhere for it to fall
+   * back to — the tap simply appears to do nothing. The system share sheet is
+   * the way a file gets off an iPhone, and "Save to Files" is one tap inside it.
+   * Shown only where a file can actually be shared, so it never appears as a
+   * button that cannot work.
+   */
+  const onShare = useCallback(() => {
+    setBusy('Preparing the file…');
+    const now = Date.now();
+    flushEdits()
+      .then((edit) => exportDocument(db, DOC_ID, edit))
+      .then(async ({ text, blocks }) => {
+        if (blocks === 0) {
+          setMessage('Nothing to share yet — the document is empty.');
+          return;
+        }
+        const filename = documentFilename(status?.doc.title ?? '', now);
+        const outcome = await shareDocument(filename, text);
+        if (outcome === 'shared') {
+          setMessage(`Shared ${blocks.toLocaleString()} paragraphs as ${filename}.`);
+        } else if (outcome === 'dismissed') {
+          setMessage('Share cancelled — nothing left the device.');
+        } else {
+          // Refused, or the gesture was spent on the read. Hand the text over
+          // rather than leaving the writer with a button that did nothing.
+          setEscapeText(text);
+          setMessage('This browser would not open the share sheet, so the text is below.');
+        }
+      })
+      .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(null));
+  }, [flushEdits, status?.doc.title]);
 
   const onExportCorpus = useCallback(() => {
     setBusy('Building the corpus…');
     const now = Date.now();
-    exportCorpus(db, DOC_ID)
+    flushEdits()
+      .then(() => exportCorpus(db, DOC_ID))
       .then(({ jsonl, stats }) => {
         if (stats.emitted === 0) {
           setMessage(
@@ -325,11 +459,14 @@ export default function App() {
       })
       .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(null));
-  }, [status?.doc.title]);
+  }, [flushEdits, status?.doc.title]);
 
   const onBackup = useCallback(() => {
     setBusy('Backing up…');
-    runBackup(db)
+    // A backup that omits the sentence the writer is looking at is the one
+    // failure ADR-0013 exists to prevent, dressed as a success.
+    flushEdits()
+      .then(() => runBackup(db))
       .then((r) =>
         setMessage(
           `Backed up ${r.eventCount.toLocaleString()} events (${Math.round(r.bytes / 1024)} KB) via ${r.destination}.`,
@@ -340,7 +477,7 @@ export default function App() {
         setBusy(null);
         refresh();
       });
-  }, [refresh]);
+  }, [flushEdits, refresh]);
 
   /*
    * One button for three platforms' worth of reality. Where the browser has
@@ -437,9 +574,28 @@ export default function App() {
         <button onClick={() => fileInput.current?.click()} disabled={busy !== null}>
           Import
         </button>
-        <button onClick={onDownload} disabled={busy !== null} data-testid="download-document">
+        <button
+          onClick={onDownload}
+          disabled={busy !== null}
+          data-testid="download-document"
+          className="primary"
+          title="Save the whole document to this device as a .txt file"
+        >
           Download
         </button>
+        <button
+          onClick={onCopyAll}
+          disabled={busy !== null}
+          data-testid="copy-document"
+          title="Put the whole document on the clipboard"
+        >
+          Copy all
+        </button>
+        {shareable && (
+          <button onClick={onShare} disabled={busy !== null} data-testid="share-document">
+            Share
+          </button>
+        )}
         <button onClick={onExportCorpus} disabled={busy !== null} data-testid="corpus-export">
           Export corpus
         </button>
@@ -472,6 +628,32 @@ export default function App() {
         <p className="note" style={{ padding: '0 1rem' }} data-testid="message" aria-live="polite">
           {message}
         </p>
+      )}
+
+      {escapeText !== null && (
+        <div style={{ padding: '0 1rem' }}>
+          <section className="card" data-testid="copy-escape">
+            <h2>Copy it by hand</h2>
+            <p className="note">
+              Every paragraph is in the box below and it is already selected. Long-press it and
+              choose Copy, or press Ctrl/Cmd+C.
+            </p>
+            <textarea
+              className="copy-escape-field"
+              data-testid="copy-escape-field"
+              readOnly
+              value={escapeText}
+              ref={(field) => {
+                // Selected on mount, so the only remaining step is Copy.
+                if (field !== null) {
+                  field.focus({ preventScroll: true });
+                  field.setSelectionRange(0, field.value.length);
+                }
+              }}
+            />
+            <button onClick={() => setEscapeText(null)}>Close</button>
+          </section>
+        </div>
       )}
 
       {installHelp && installable !== 'installed' && (
@@ -639,6 +821,9 @@ export default function App() {
         docId={DOC_ID}
         onChange={onDocumentChange}
         feedback={feedback}
+        onDownload={onDownload}
+        onCopyAll={onCopyAll}
+        onShare={shareable ? onShare : undefined}
       />
 
       {/*

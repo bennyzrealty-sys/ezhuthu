@@ -74,8 +74,46 @@ describe('exporting the document', () => {
     expect(text).toBe('നിലനിൽക്കുന്നു\n');
   });
 
+  /*
+   * The paragraph the writer is still typing into. The editor holds it in a ref
+   * for 400ms so that a keystroke costs no render, so the store does not have
+   * it yet — and a download taken in that window is what arrived without the
+   * writer's work in it (ADR-0036).
+   */
+  it('prefers the paragraph being typed over the stored one', async () => {
+    const first = await insertBlock(db, DOC, 'പഴയ വാചകം');
+    await insertBlock(db, DOC, 'രണ്ടാമത്തേത്');
+
+    const { text } = await exportDocument(db, DOC, {
+      blockId: first.blockId,
+      text: 'തിരുത്തിയ വാചകം',
+    });
+    expect(text).toBe('തിരുത്തിയ വാചകം\n\nരണ്ടാമത്തേത്\n');
+  });
+
+  it('carries a paragraph that has been started but never committed', async () => {
+    // The worst shape of the bug: Start writing, type, download. The block
+    // exists because insertBlock created it; its text is still ''.
+    const started = await insertBlock(db, DOC, '');
+
+    const stored = await exportDocument(db, DOC);
+    expect(stored.text).toBe('\n');
+
+    const live = await exportDocument(db, DOC, {
+      blockId: started.blockId,
+      text: 'ഇപ്പോൾ എഴുതിയത്',
+    });
+    expect(live.text).toBe('ഇപ്പോൾ എഴുതിയത്\n');
+  });
+
+  it('ignores a pending edit for a paragraph that is not in the document', async () => {
+    await insertBlock(db, DOC, 'ഒന്ന്');
+    const { text } = await exportDocument(db, DOC, { blockId: 'gone', text: 'ഇല്ല' });
+    expect(text).toBe('ഒന്ന്\n');
+  });
+
   it('says nothing rather than a stray newline for an empty document', async () => {
-    expect(await exportDocument(db, DOC)).toEqual({ text: '', blocks: 0, characters: 0 });
+    expect(await exportDocument(db, DOC)).toEqual({ text: '', blocks: 0, characters: 0, bytes: 0 });
   });
 });
 
@@ -98,5 +136,27 @@ describe('the file name', () => {
     const a = documentFilename('', now);
     const b = documentFilename('', now + 61_000);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('the size the app reports', () => {
+  it('is the size of the file on disk, not the length of the string', async () => {
+    // The bug this replaces: `text.length` counts UTF-16 code units, so a
+    // Malayalam manuscript was announced at roughly a third of the size the
+    // phone's Downloads screen would show it at.
+    await insertBlock(db, DOC, 'അവൻ ഒരു എഴുത്തുകാരൻ ആണ്.');
+
+    const { text, characters, bytes } = await exportDocument(db, DOC);
+    expect(bytes).toBe(Buffer.byteLength(text, 'utf8'));
+    expect(characters).toBe([...text].length);
+    expect(bytes).toBeGreaterThan(characters);
+  });
+
+  it('counts characters the way a reader would, not in code units', async () => {
+    // A surrogate pair is one character and two code units.
+    await insertBlock(db, DOC, '😀');
+    const { characters, bytes } = await exportDocument(db, DOC);
+    expect(characters).toBe(2); // the emoji and the trailing newline
+    expect(bytes).toBe(5); // four bytes for the emoji, one for the newline
   });
 });

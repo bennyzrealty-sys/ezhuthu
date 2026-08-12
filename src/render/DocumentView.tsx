@@ -30,7 +30,7 @@ import { uuid } from '../db/ids';
 import { HeightCache } from './measure';
 import { caretOffsetFromPoint } from './caret';
 import { BlockRow } from './BlockRow';
-import { BlockEditor } from './BlockEditor';
+import { BlockEditor, type BlockEditorHandle } from './BlockEditor';
 import { MarginBar } from './MarginBar';
 import { Minimap } from './Minimap';
 import { Seam } from './Seam';
@@ -69,6 +69,23 @@ export interface DocumentViewHandle {
   reveal: (target: RevealTarget) => void;
   clearHighlight: () => void;
   /**
+   * Commit whatever is in the focused editor, and report it.
+   *
+   * Everything outside this component reads the `blocks` projection, and the
+   * paragraph being typed into is not in it: the editor holds the draft in a
+   * ref for `IDLE_COMMIT_MS` so that typing costs no render. Any command that
+   * reads the whole document — Download, Back up, Export corpus — therefore
+   * sees the text as it was up to 400ms ago unless it asks first. When the
+   * commit had not happened at all (a paragraph begun and downloaded inside
+   * the same second) what it sees is an EMPTY paragraph, which is how a
+   * download of freshly written work arrived empty.
+   *
+   * Returns the draft even when it could not be committed, which happens only
+   * mid-composition (rule 6): a file must still contain what is on screen.
+   * Resolves to `null` when nothing is focused.
+   */
+  flushPendingEdit: () => Promise<{ blockId: string; text: string } | null>;
+  /**
    * Re-read the document from the store.
    *
    * For changes this view did not make — undo is the one that exists (ADR-0033).
@@ -94,6 +111,26 @@ export interface DocumentViewProps {
   now?: () => number;
   /** Scroll-past feedback (ADR-0022). Off by default. */
   feedback?: FeedbackSettings;
+  /**
+   * Write the document to a file. Rendered at the end of the text, where the
+   * writer stops writing — the toolbar has one too, but it is the seventh of
+   * ten identical buttons, and "I cannot download my script" was reported by
+   * someone looking straight at it. Absent means the affordance is not shown.
+   */
+  onDownload?: () => void;
+  /**
+   * Put the whole document on the clipboard. Beside Download rather than
+   * behind it: a download can fail in ways an installed PWA cannot report —
+   * no address bar, no tab strip, no visible Downloads shelf — and a clipboard
+   * write either happens or throws (ADR-0037).
+   */
+  onCopyAll?: () => void;
+  /**
+   * Hand the file to the OS share sheet. Passed only where a file can actually
+   * be shared — on an iPhone this is the route that reaches Files at all
+   * (ADR-0037).
+   */
+  onShare?: () => void;
   ref?: RefObject<DocumentViewHandle | null>;
 }
 
@@ -108,12 +145,20 @@ export function DocumentView({
   onChange,
   now,
   feedback = DEFAULT_FEEDBACK,
+  onDownload,
+  onCopyAll,
+  onShare,
   ref,
 }: DocumentViewProps) {
   const [index, setIndex] = useState<BlockIndexEntry[]>([]);
   const [seams, setSeams] = useState<Seams>({ before: new Map(), trailing: [] });
   const [texts, setTexts] = useState<Map<string, string>>(new Map());
   const [focus, setFocus] = useState<FocusTarget | null>(null);
+  /**
+   * The focused editor, for the one thing that has to reach into it: taking
+   * the draft it is holding before something reads the document as a whole.
+   */
+  const editor = useRef<BlockEditorHandle | null>(null);
   const [loading, setLoading] = useState(true);
   const [highlight, setHighlight] = useState<RevealTarget | null>(null);
   const [signals, setSignals] = useState<SignalCollector | null>(null);
@@ -260,44 +305,6 @@ export function DocumentView({
   // Jumping to a search result
   // -------------------------------------------------------------------------
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      reveal(target) {
-        /*
-         * The search cursor and this index are both "live blocks in order", so
-         * `position` is normally right. It can still be stale — a block
-         * deleted between the search and the tap shifts everything after it —
-         * so the id is what we trust and the position is only a starting
-         * guess. Getting this backwards sends the reader to a paragraph near
-         * the one they asked for, which is worse than a visible miss.
-         */
-        const at =
-          index[target.position]?.blockId === target.blockId
-            ? target.position
-            : index.findIndex((e) => e.blockId === target.blockId);
-        if (at === -1) return;
-
-        setHighlight(target);
-        // `center` rather than `start`: a result pinned under the toolbar
-        // gives no context above it, and context is what tells the reader
-        // whether this is the paragraph they meant.
-        virtualizer.scrollToIndex(at, { align: 'center' });
-      },
-      clearHighlight() {
-        setHighlight(null);
-      },
-      reload() {
-        // Drop the cached text as well as the index: undo changes the words in
-        // a block the window is already holding, and a stale entry there would
-        // show the reader the text they just took back.
-        setTexts(new Map());
-        setFocus(null);
-        void loadIndex();
-      },
-    }),
-    [index, virtualizer, loadIndex],
-  );
 
   // -------------------------------------------------------------------------
   // Font loading
@@ -435,19 +442,42 @@ export function DocumentView({
 
   const activate = useCallback(
     (blockId: string, clientX: number, clientY: number) => {
-      const element = scrollRef.current?.querySelector(`[data-block-id="${blockId}"]`);
-      const text = texts.get(blockId) ?? '';
-      const caret =
-        element === null || element === undefined
-          ? text.length
-          : caretOffsetFromPoint(element, clientX, clientY, text);
-      setFocus({ blockId, caret });
-      // The mark's offsets are into the text as it was when the search ran.
-      // Once the reader is editing, they are a claim about text that is about
-      // to change, so drop it rather than let it drift.
-      setHighlight(null);
+      const open = (text: string) => {
+        const element = scrollRef.current?.querySelector(`[data-block-id="${blockId}"]`);
+        const caret =
+          element === null || element === undefined
+            ? text.length
+            : caretOffsetFromPoint(element, clientX, clientY, text);
+        setFocus({ blockId, caret });
+        // The mark's offsets are into the text as it was when the search ran.
+        // Once the reader is editing, they are a claim about text that is about
+        // to change, so drop it rather than let it drift.
+        setHighlight(null);
+      };
+
+      /*
+       * Text this window has not fetched yet is `undefined`, NOT empty — and
+       * the difference is a paragraph. Opening the editor on `''` mounts a
+       * blank field over real prose (the mount effect is keyed on blockId, so
+       * the text arriving afterwards never reaches it), and leaving that field
+       * commits the blank over the writer's work.
+       *
+       * The window is short — the text arrives one IndexedDB round trip after
+       * the row renders — but it is exactly the moment after a jump from
+       * search, a bookmark, the minimap or the resume strip, which is when a
+       * reader is most likely to tap the paragraph they were sent to. Reading
+       * the one block costs a single `get` and closes it.
+       */
+      const loaded = texts.get(blockId);
+      if (loaded !== undefined) return open(loaded);
+
+      void db.blocks.get(blockId).then((block) => {
+        const text = block?.text ?? '';
+        setTexts((previous) => new Map(previous).set(blockId, text));
+        open(text);
+      });
     },
-    [texts],
+    [db, texts],
   );
 
   const commit = useCallback(
@@ -517,11 +547,30 @@ export function DocumentView({
    * permanent (rule 1): a paragraph the writer never typed in should not be an
    * event, let alone two.
    */
-  const appendParagraph = useCallback(async () => {
+  const appendBlockAtEnd = useCallback(async () => {
+    /*
+     * Commit what is being typed BEFORE deciding what to do, and then ask the
+     * store rather than the index.
+     *
+     * `index` carries committed lengths, so during the 400ms after a keystroke
+     * it does not describe what the writer can see. Reading it directly gave
+     * two wrong answers: a last paragraph that is empty in the projection but
+     * has just been typed into takes the "focus it instead" branch, and the
+     * button does nothing at all — which is what a fresh install hits, because
+     * Start writing → type → + New paragraph is the first thing anyone does.
+     * And a paragraph typed past the projection's length gets a new block, and
+     * the unmounting editor's tail with it.
+     */
+    const pending = editor.current?.flush();
+    if (pending !== undefined && !pending.composing) await commit(pending.blockId, pending.text);
+
     const last = index[index.length - 1];
-    if (last !== undefined && last.length === 0) {
-      setFocus({ blockId: last.blockId, caret: 0 });
-      return;
+    if (last !== undefined) {
+      const stored = await db.blocks.get(last.blockId);
+      if (stored !== undefined && stored.deletedAt === undefined && stored.text.length === 0) {
+        setFocus({ blockId: last.blockId, caret: 0 });
+        return;
+      }
     }
 
     // No `afterBlockId` — append at the end (core/events.ts). The order key it
@@ -545,7 +594,27 @@ export function DocumentView({
     ]);
     setFocus({ blockId: created.blockId, caret: 0 });
     onChange?.();
-  }, [db, docId, index, onChange]);
+  }, [db, docId, index, onChange, commit]);
+
+  /**
+   * One append at a time.
+   *
+   * `index` is React state, so three fast taps all read the document as it was
+   * before the first insert landed, and all three insert — three paragraphs
+   * nobody typed, into a permanent log, from one fat-fingered tap on a phone.
+   * The race predates the flush above; the flush widens the window.
+   */
+  const appending = useRef(false);
+
+  const appendParagraph = useCallback(async () => {
+    if (appending.current) return;
+    appending.current = true;
+    try {
+      await appendBlockAtEnd();
+    } finally {
+      appending.current = false;
+    }
+  }, [appendBlockAtEnd]);
 
   const mergeBack = useCallback(
     async (blockId: string, text: string) => {
@@ -591,6 +660,89 @@ export function DocumentView({
     },
     [commit],
   );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      reveal(target) {
+        /*
+         * The search cursor and this index are both "live blocks in order", so
+         * `position` is normally right. It can still be stale — a block
+         * deleted between the search and the tap shifts everything after it —
+         * so the id is what we trust and the position is only a starting
+         * guess. Getting this backwards sends the reader to a paragraph near
+         * the one they asked for, which is worse than a visible miss.
+         */
+        const at =
+          index[target.position]?.blockId === target.blockId
+            ? target.position
+            : index.findIndex((e) => e.blockId === target.blockId);
+        if (at === -1) return;
+
+        setHighlight(target);
+        // `center` rather than `start`: a result pinned under the toolbar
+        // gives no context above it, and context is what tells the reader
+        // whether this is the paragraph they meant.
+        virtualizer.scrollToIndex(at, { align: 'center' });
+      },
+      clearHighlight() {
+        setHighlight(null);
+      },
+      async flushPendingEdit() {
+        const pending = editor.current?.flush();
+        if (pending === undefined) return null;
+        // Composition is the one case a commit is refused (rule 6, ADR-0010).
+        // The draft is still returned, so a file written now shows what the
+        // writer can see; the IME's own compositionend reschedules the commit.
+        if (!pending.composing) await commit(pending.blockId, pending.text);
+        return { blockId: pending.blockId, text: pending.text };
+      },
+      reload() {
+        // Drop the cached text as well as the index: undo changes the words in
+        // a block the window is already holding, and a stale entry there would
+        // show the reader the text they just took back.
+        setTexts(new Map());
+        setFocus(null);
+        void loadIndex();
+      },
+    }),
+    [index, virtualizer, loadIndex, commit],
+  );
+
+  /*
+   * Commit the draft when the app goes away.
+   *
+   * The editor holds up to `IDLE_COMMIT_MS` of typing in a ref so that a
+   * keystroke costs no render (BlockEditor rule 1). On a phone that window is
+   * where work is lost: a writer types a line and swipes the app away, and the
+   * process is frozen — or discarded outright — before the timer runs. There is
+   * no unload event that can be relied on to write asynchronously, but
+   * `visibilitychange` fires BEFORE the freeze on every platform this app
+   * targets, which is why the signals queue already flushes there
+   * (signals/collector.ts). Telemetry about the writing had this and the
+   * writing itself did not.
+   *
+   * `pagehide` as well, for the one case visibility does not cover: a
+   * navigation away from a still-visible page.
+   *
+   * A composing IME is left alone (rule 6). Nothing else here can refuse.
+   */
+  useEffect(() => {
+    const flush = () => {
+      const pending = editor.current?.flush();
+      if (pending === undefined || pending.composing) return;
+      void commit(pending.blockId, pending.text);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [commit]);
 
   const reportHeight = useCallback((blockId: string, height: number) => {
     heights.current.set(blockId, width.current, height);
@@ -714,6 +866,7 @@ export function DocumentView({
                         onBlur={(id, value) => void blur(id, value)}
                         onHeight={reportHeight}
                         typing={signals?.typing}
+                        handleRef={editor}
                       />
                       <button
                         type="button"
@@ -768,6 +921,34 @@ export function DocumentView({
         >
           + New paragraph
         </button>
+        {(onDownload !== undefined || onCopyAll !== undefined || onShare !== undefined) && (
+          <div className="doc-end-actions">
+            {onDownload !== undefined && (
+              <button
+                type="button"
+                className="primary"
+                data-testid="download-document-end"
+                onClick={onDownload}
+              >
+                Download this writing
+              </button>
+            )}
+            {onCopyAll !== undefined && (
+              <button type="button" data-testid="copy-document-end" onClick={onCopyAll}>
+                Copy all text
+              </button>
+            )}
+            {onShare !== undefined && (
+              <button type="button" data-testid="share-document-end" onClick={onShare}>
+                Share…
+              </button>
+            )}
+            <p className="note">
+              Every paragraph above — as a plain .txt file on this device, or on the clipboard to
+              paste anywhere.
+            </p>
+          </div>
+        )}
       </div>
       <Minimap blocks={index} onJump={jumpToIndex} now={now} />
     </div>

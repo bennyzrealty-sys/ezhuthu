@@ -145,8 +145,13 @@ of every working session. Read it first if you are picking this up cold.
 ## Your data is yours
 
 The event log is a complete record of how the document was written. It exports as JSON (**Back
-up**). The document itself downloads as plain `.txt` — the same format **Import** accepts, so it
-round-trips byte for byte (**Download**). The accumulated (before, after) edit pairs export as
+up**). The document itself comes out three ways, all one tap, all over the same bytes — the toolbar and
+the end of the document both carry them. **Download** writes a plain `.txt`, the same format
+**Import** accepts, so it round-trips byte for byte. **Copy all** puts the whole manuscript on the
+clipboard, which is the route that works when a browser will not save a file — notably an iPhone
+running the app from its home screen (ADR-0037). **Share** appears where the OS can take a file, and
+is how a file reaches Files on iOS. What you get is what is on screen, including the sentence you
+are in the middle of typing (ADR-0036), and nothing is normalised on the way out (ADR-0014). The accumulated (before, after) edit pairs export as
 JSONL (**Export corpus**)
 — a personal style corpus in a low-resource language, produced for free by normal writing.
 See [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md).
