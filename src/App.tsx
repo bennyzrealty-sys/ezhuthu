@@ -176,8 +176,36 @@ export default function App() {
     snapshots.current?.request();
   }, [refresh, refreshUndo]);
 
+  /*
+   * Commit whatever the writer is in the middle of typing, before anything
+   * reads the document as a whole.
+   *
+   * Download, Back up and Export corpus all read committed state — the `blocks`
+   * projection or the event log — and the paragraph under the caret is in
+   * neither for up to `IDLE_COMMIT_MS` after the last keystroke (ADR-0036). On
+   * the browsers where tapping a button moves focus, the editor's own blur
+   * happened to commit first and this was invisible; on the ones where it does
+   * not (Safari and iOS do not focus a button on tap), the file arrived without
+   * the writer's most recent work, and a paragraph begun and downloaded in the
+   * same breath arrived EMPTY.
+   *
+   * Awaited, so the append has committed before the read starts.
+   */
+  const flushEdits = useCallback(async () => {
+    return (await view.current?.flushPendingEdit()) ?? null;
+  }, []);
+
   const onUndo = useCallback(() => {
-    undoLast(db, DOC_ID)
+    /*
+     * Flush first, like every other command that reads committed state.
+     * `undoLast` reads the tail of the event log, which by construction cannot
+     * contain the paragraph being typed — so an undo pressed inside the 400ms
+     * window reversed an OLDER, unrelated edit, and the reload that follows
+     * threw the current sentence away. Both halves silently, under a success
+     * message.
+     */
+    flushEdits()
+      .then(() => undoLast(db, DOC_ID))
       .then((outcome) => {
         if (outcome.refused === 'not-reversible') {
           setMessage('That change cannot be undone.');
@@ -195,7 +223,7 @@ export default function App() {
         refreshUndo();
       })
       .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
-  }, [refresh, refreshUndo]);
+  }, [flushEdits, refresh, refreshUndo]);
 
   /*
    * Signals older than the retention window have no reader — the queries ask
@@ -232,25 +260,6 @@ export default function App() {
     },
     [],
   );
-
-  /*
-   * Commit whatever the writer is in the middle of typing, before anything
-   * reads the document as a whole.
-   *
-   * Download, Back up and Export corpus all read committed state — the `blocks`
-   * projection or the event log — and the paragraph under the caret is in
-   * neither for up to `IDLE_COMMIT_MS` after the last keystroke (ADR-0036). On
-   * the browsers where tapping a button moves focus, the editor's own blur
-   * happened to commit first and this was invisible; on the ones where it does
-   * not (Safari and iOS do not focus a button on tap), the file arrived without
-   * the writer's most recent work, and a paragraph begun and downloaded in the
-   * same breath arrived EMPTY.
-   *
-   * Awaited, so the append has committed before the read starts.
-   */
-  const flushEdits = useCallback(async () => {
-    return (await view.current?.flushPendingEdit()) ?? null;
-  }, []);
 
   const onImport = useCallback(
     async (file: File) => {

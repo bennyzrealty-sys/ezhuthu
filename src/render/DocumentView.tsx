@@ -427,19 +427,42 @@ export function DocumentView({
 
   const activate = useCallback(
     (blockId: string, clientX: number, clientY: number) => {
-      const element = scrollRef.current?.querySelector(`[data-block-id="${blockId}"]`);
-      const text = texts.get(blockId) ?? '';
-      const caret =
-        element === null || element === undefined
-          ? text.length
-          : caretOffsetFromPoint(element, clientX, clientY, text);
-      setFocus({ blockId, caret });
-      // The mark's offsets are into the text as it was when the search ran.
-      // Once the reader is editing, they are a claim about text that is about
-      // to change, so drop it rather than let it drift.
-      setHighlight(null);
+      const open = (text: string) => {
+        const element = scrollRef.current?.querySelector(`[data-block-id="${blockId}"]`);
+        const caret =
+          element === null || element === undefined
+            ? text.length
+            : caretOffsetFromPoint(element, clientX, clientY, text);
+        setFocus({ blockId, caret });
+        // The mark's offsets are into the text as it was when the search ran.
+        // Once the reader is editing, they are a claim about text that is about
+        // to change, so drop it rather than let it drift.
+        setHighlight(null);
+      };
+
+      /*
+       * Text this window has not fetched yet is `undefined`, NOT empty — and
+       * the difference is a paragraph. Opening the editor on `''` mounts a
+       * blank field over real prose (the mount effect is keyed on blockId, so
+       * the text arriving afterwards never reaches it), and leaving that field
+       * commits the blank over the writer's work.
+       *
+       * The window is short — the text arrives one IndexedDB round trip after
+       * the row renders — but it is exactly the moment after a jump from
+       * search, a bookmark, the minimap or the resume strip, which is when a
+       * reader is most likely to tap the paragraph they were sent to. Reading
+       * the one block costs a single `get` and closes it.
+       */
+      const loaded = texts.get(blockId);
+      if (loaded !== undefined) return open(loaded);
+
+      void db.blocks.get(blockId).then((block) => {
+        const text = block?.text ?? '';
+        setTexts((previous) => new Map(previous).set(blockId, text));
+        open(text);
+      });
     },
-    [texts],
+    [db, texts],
   );
 
   const commit = useCallback(
@@ -509,11 +532,30 @@ export function DocumentView({
    * permanent (rule 1): a paragraph the writer never typed in should not be an
    * event, let alone two.
    */
-  const appendParagraph = useCallback(async () => {
+  const appendBlockAtEnd = useCallback(async () => {
+    /*
+     * Commit what is being typed BEFORE deciding what to do, and then ask the
+     * store rather than the index.
+     *
+     * `index` carries committed lengths, so during the 400ms after a keystroke
+     * it does not describe what the writer can see. Reading it directly gave
+     * two wrong answers: a last paragraph that is empty in the projection but
+     * has just been typed into takes the "focus it instead" branch, and the
+     * button does nothing at all — which is what a fresh install hits, because
+     * Start writing → type → + New paragraph is the first thing anyone does.
+     * And a paragraph typed past the projection's length gets a new block, and
+     * the unmounting editor's tail with it.
+     */
+    const pending = editor.current?.flush();
+    if (pending !== undefined && !pending.composing) await commit(pending.blockId, pending.text);
+
     const last = index[index.length - 1];
-    if (last !== undefined && last.length === 0) {
-      setFocus({ blockId: last.blockId, caret: 0 });
-      return;
+    if (last !== undefined) {
+      const stored = await db.blocks.get(last.blockId);
+      if (stored !== undefined && stored.deletedAt === undefined && stored.text.length === 0) {
+        setFocus({ blockId: last.blockId, caret: 0 });
+        return;
+      }
     }
 
     // No `afterBlockId` — append at the end (core/events.ts). The order key it
@@ -537,7 +579,27 @@ export function DocumentView({
     ]);
     setFocus({ blockId: created.blockId, caret: 0 });
     onChange?.();
-  }, [db, docId, index, onChange]);
+  }, [db, docId, index, onChange, commit]);
+
+  /**
+   * One append at a time.
+   *
+   * `index` is React state, so three fast taps all read the document as it was
+   * before the first insert landed, and all three insert — three paragraphs
+   * nobody typed, into a permanent log, from one fat-fingered tap on a phone.
+   * The race predates the flush above; the flush widens the window.
+   */
+  const appending = useRef(false);
+
+  const appendParagraph = useCallback(async () => {
+    if (appending.current) return;
+    appending.current = true;
+    try {
+      await appendBlockAtEnd();
+    } finally {
+      appending.current = false;
+    }
+  }, [appendBlockAtEnd]);
 
   const mergeBack = useCallback(
     async (blockId: string, text: string) => {

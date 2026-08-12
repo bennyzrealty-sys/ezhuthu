@@ -111,6 +111,16 @@ export function BlockEditor({
   const timer = useRef<number | null>(null);
   /** Latest text, held outside React so typing never triggers a render. */
   const draft = useRef(initialText);
+  /**
+   * The last text handed to the owner to be committed.
+   *
+   * Not the same as `initialText`, which is the prop this editor mounted with
+   * and does not change while it is focused. Without this, the unmount commit
+   * cannot tell "never saved" from "saved a moment ago by blur", and appends a
+   * second, identical `update` event — which is invisible in the document and
+   * very visible in undo, where one press then takes back half an edit.
+   */
+  const handedOver = useRef(initialText);
 
   const clearTimer = useCallback(() => {
     if (timer.current !== null) {
@@ -124,9 +134,10 @@ export function BlockEditor({
     // A commit that lands mid-composition corrupts the IME buffer. The timer
     // is restarted by compositionend instead.
     if (composing.current) return;
-    if (draft.current === initialText) return;
+    if (draft.current === handedOver.current) return;
+    handedOver.current = draft.current;
     onCommit(blockId, draft.current);
-  }, [blockId, clearTimer, initialText, onCommit]);
+  }, [blockId, clearTimer, onCommit]);
 
   const scheduleCommit = useCallback(() => {
     clearTimer();
@@ -144,6 +155,9 @@ export function BlockEditor({
         const text = ref.current?.value ?? draft.current;
         draft.current = text;
         clearTimer();
+        // The caller commits unless an IME is mid-word, so record it as handed
+        // over in that case — otherwise the unmount commit repeats it.
+        if (!composing.current) handedOver.current = text;
         return { blockId, text, composing: composing.current };
       },
     }),
@@ -163,6 +177,7 @@ export function BlockEditor({
     const field = ref.current;
     if (field === null) return;
     draft.current = initialText;
+    handedOver.current = initialText;
     field.value = initialText;
     resize();
     placeCaret(field, initialCaret);
@@ -171,7 +186,39 @@ export function BlockEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockId]);
 
-  useEffect(() => clearTimer, [clearTimer]);
+  /*
+   * Commit on unmount, not merely stand the timer down.
+   *
+   * The draft lives in a ref, and the field's own `blur` was doing the saving.
+   * But a focused element that is REMOVED from the document does not get a
+   * blur event in Chromium or WebKit, and this field is an ordinary
+   * virtualised row: scroll the paragraph you are typing into off the screen
+   * within the 400ms window and it is recycled, taking the sentence with it.
+   * Undo (which reloads the view), Import (which remounts it) and appending a
+   * paragraph (which moves focus) all unmount it the same way.
+   *
+   * Held in a ref rather than closed over, so the cleanup runs with the latest
+   * draft and the latest `onCommit` without re-subscribing on every keystroke.
+   * `draft` rather than the field's value: React may have detached the DOM ref
+   * by the time this runs.
+   */
+  const commitOnUnmount = useRef<() => void>(() => undefined);
+  commitOnUnmount.current = () => {
+    // Rule 6: never commit mid-composition. The IME's buffer is the browser's
+    // to finish, and this is not a moment we can make it safe.
+    if (composing.current) return;
+    if (draft.current === handedOver.current) return;
+    handedOver.current = draft.current;
+    onCommit(blockId, draft.current);
+  };
+
+  useEffect(
+    () => () => {
+      clearTimer();
+      commitOnUnmount.current();
+    },
+    [clearTimer],
+  );
 
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLTextAreaElement>) => {
@@ -267,6 +314,7 @@ export function BlockEditor({
         typing?.blur();
         // Blur during composition finalises it first; the browser fires
         // compositionend before blur, so the draft is already settled.
+        handedOver.current = draft.current;
         onBlur(blockId, draft.current);
       }}
     />
