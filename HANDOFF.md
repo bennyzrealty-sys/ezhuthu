@@ -167,7 +167,13 @@ followed by a second one, so repeated taps cost no events. `tests/e2e/writing.sp
 first paragraph, its survival across a reload, the hand-over to Enter, appending to an existing
 document, and the two ways this could otherwise pollute a permanent log.
 
-**Tests: 430 unit + 77 e2e + 8 perf, all passing.**
+**Downloading the document** (`src/features/io/export.ts`). The writing, as a `.txt` file, from a
+**Download** button next to Import. Reuses `joinBlocks` — which had sat in `import.ts` since Phase
+2 documented as "inverse of `splitIntoBlocks`" and was never wired to anything — so export →
+import → export is byte-identical, asserted in both suites over chillu, ZWJ and ZWNJ. Reads
+`[docId+order]`, skips soft-deleted blocks.
+
+**Tests: 438 unit + 82 e2e + 8 perf, all passing.**
 
 ## Measured performance
 
@@ -508,6 +514,18 @@ All 33 are in `DECISIONS.md`. The twenty-three that departed from the original b
 | 0035 | The precache list is generated from the build and injected into the worker's bytes |
 
 ## Corrections made so far
+
+**Phase 8 — there was no way to download the document, and the README said there was.** Reported
+from a phone as "I can't download an edited work", and exactly right. Three buttons looked like
+exports and none of them was the manuscript: **Back up** writes the event log as JSON (a restore
+file, unreadable as prose), **Export corpus** writes revision *pairs* and is deliberately empty for
+a document that has only been written rather than revised (ADR-0030) — so a writer who typed a
+page and pressed it got "No revisions yet" and no file — and Import only goes one way. Meanwhile
+`README.md` claimed "the document exports as `.txt` and `.md`", and `joinBlocks` had been sitting
+in `import.ts` since Phase 2, documented as the inverse of `splitIntoBlocks`, wired to nothing.
+The feature is now built and the README says `.txt`, which is what is true. Same lesson as Phase 3's
+missing shaping assertion: a documented capability is not a capability, and nothing in the suites
+noticed because no test asked for the writing back.
 
 **Phase 8 — an empty document could not be written in.** The editor opens by tapping a paragraph
 (`BlockRow`), a fresh install has none, and the empty state said "Import a file to begin" — so the
