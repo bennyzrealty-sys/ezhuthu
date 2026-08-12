@@ -30,7 +30,7 @@ import { uuid } from '../db/ids';
 import { HeightCache } from './measure';
 import { caretOffsetFromPoint } from './caret';
 import { BlockRow } from './BlockRow';
-import { BlockEditor } from './BlockEditor';
+import { BlockEditor, type BlockEditorHandle } from './BlockEditor';
 import { MarginBar } from './MarginBar';
 import { Minimap } from './Minimap';
 import { Seam } from './Seam';
@@ -68,6 +68,23 @@ export interface DocumentViewHandle {
    */
   reveal: (target: RevealTarget) => void;
   clearHighlight: () => void;
+  /**
+   * Commit whatever is in the focused editor, and report it.
+   *
+   * Everything outside this component reads the `blocks` projection, and the
+   * paragraph being typed into is not in it: the editor holds the draft in a
+   * ref for `IDLE_COMMIT_MS` so that typing costs no render. Any command that
+   * reads the whole document — Download, Back up, Export corpus — therefore
+   * sees the text as it was up to 400ms ago unless it asks first. When the
+   * commit had not happened at all (a paragraph begun and downloaded inside
+   * the same second) what it sees is an EMPTY paragraph, which is how a
+   * download of freshly written work arrived empty.
+   *
+   * Returns the draft even when it could not be committed, which happens only
+   * mid-composition (rule 6): a file must still contain what is on screen.
+   * Resolves to `null` when nothing is focused.
+   */
+  flushPendingEdit: () => Promise<{ blockId: string; text: string } | null>;
   /**
    * Re-read the document from the store.
    *
@@ -114,6 +131,11 @@ export function DocumentView({
   const [seams, setSeams] = useState<Seams>({ before: new Map(), trailing: [] });
   const [texts, setTexts] = useState<Map<string, string>>(new Map());
   const [focus, setFocus] = useState<FocusTarget | null>(null);
+  /**
+   * The focused editor, for the one thing that has to reach into it: taking
+   * the draft it is holding before something reads the document as a whole.
+   */
+  const editor = useRef<BlockEditorHandle | null>(null);
   const [loading, setLoading] = useState(true);
   const [highlight, setHighlight] = useState<RevealTarget | null>(null);
   const [signals, setSignals] = useState<SignalCollector | null>(null);
@@ -260,44 +282,6 @@ export function DocumentView({
   // Jumping to a search result
   // -------------------------------------------------------------------------
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      reveal(target) {
-        /*
-         * The search cursor and this index are both "live blocks in order", so
-         * `position` is normally right. It can still be stale — a block
-         * deleted between the search and the tap shifts everything after it —
-         * so the id is what we trust and the position is only a starting
-         * guess. Getting this backwards sends the reader to a paragraph near
-         * the one they asked for, which is worse than a visible miss.
-         */
-        const at =
-          index[target.position]?.blockId === target.blockId
-            ? target.position
-            : index.findIndex((e) => e.blockId === target.blockId);
-        if (at === -1) return;
-
-        setHighlight(target);
-        // `center` rather than `start`: a result pinned under the toolbar
-        // gives no context above it, and context is what tells the reader
-        // whether this is the paragraph they meant.
-        virtualizer.scrollToIndex(at, { align: 'center' });
-      },
-      clearHighlight() {
-        setHighlight(null);
-      },
-      reload() {
-        // Drop the cached text as well as the index: undo changes the words in
-        // a block the window is already holding, and a stale entry there would
-        // show the reader the text they just took back.
-        setTexts(new Map());
-        setFocus(null);
-        void loadIndex();
-      },
-    }),
-    [index, virtualizer, loadIndex],
-  );
 
   // -------------------------------------------------------------------------
   // Font loading
@@ -592,6 +576,89 @@ export function DocumentView({
     [commit],
   );
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      reveal(target) {
+        /*
+         * The search cursor and this index are both "live blocks in order", so
+         * `position` is normally right. It can still be stale — a block
+         * deleted between the search and the tap shifts everything after it —
+         * so the id is what we trust and the position is only a starting
+         * guess. Getting this backwards sends the reader to a paragraph near
+         * the one they asked for, which is worse than a visible miss.
+         */
+        const at =
+          index[target.position]?.blockId === target.blockId
+            ? target.position
+            : index.findIndex((e) => e.blockId === target.blockId);
+        if (at === -1) return;
+
+        setHighlight(target);
+        // `center` rather than `start`: a result pinned under the toolbar
+        // gives no context above it, and context is what tells the reader
+        // whether this is the paragraph they meant.
+        virtualizer.scrollToIndex(at, { align: 'center' });
+      },
+      clearHighlight() {
+        setHighlight(null);
+      },
+      async flushPendingEdit() {
+        const pending = editor.current?.flush();
+        if (pending === undefined) return null;
+        // Composition is the one case a commit is refused (rule 6, ADR-0010).
+        // The draft is still returned, so a file written now shows what the
+        // writer can see; the IME's own compositionend reschedules the commit.
+        if (!pending.composing) await commit(pending.blockId, pending.text);
+        return { blockId: pending.blockId, text: pending.text };
+      },
+      reload() {
+        // Drop the cached text as well as the index: undo changes the words in
+        // a block the window is already holding, and a stale entry there would
+        // show the reader the text they just took back.
+        setTexts(new Map());
+        setFocus(null);
+        void loadIndex();
+      },
+    }),
+    [index, virtualizer, loadIndex, commit],
+  );
+
+  /*
+   * Commit the draft when the app goes away.
+   *
+   * The editor holds up to `IDLE_COMMIT_MS` of typing in a ref so that a
+   * keystroke costs no render (BlockEditor rule 1). On a phone that window is
+   * where work is lost: a writer types a line and swipes the app away, and the
+   * process is frozen — or discarded outright — before the timer runs. There is
+   * no unload event that can be relied on to write asynchronously, but
+   * `visibilitychange` fires BEFORE the freeze on every platform this app
+   * targets, which is why the signals queue already flushes there
+   * (signals/collector.ts). Telemetry about the writing had this and the
+   * writing itself did not.
+   *
+   * `pagehide` as well, for the one case visibility does not cover: a
+   * navigation away from a still-visible page.
+   *
+   * A composing IME is left alone (rule 6). Nothing else here can refuse.
+   */
+  useEffect(() => {
+    const flush = () => {
+      const pending = editor.current?.flush();
+      if (pending === undefined || pending.composing) return;
+      void commit(pending.blockId, pending.text);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [commit]);
+
   const reportHeight = useCallback((blockId: string, height: number) => {
     heights.current.set(blockId, width.current, height);
   }, []);
@@ -714,6 +781,7 @@ export function DocumentView({
                         onBlur={(id, value) => void blur(id, value)}
                         onHeight={reportHeight}
                         typing={signals?.typing}
+                        handleRef={editor}
                       />
                       <button
                         type="button"

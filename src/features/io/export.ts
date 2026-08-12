@@ -28,6 +28,27 @@ export interface DocumentExport {
 }
 
 /**
+ * A paragraph the writer is in the middle of, which the store does not have yet.
+ *
+ * The editor holds the focused paragraph's text in a ref and commits it after
+ * 400ms of quiet, so that typing costs no render. Everything here reads the
+ * `blocks` projection, and a download taken while the writer is still typing
+ * therefore misses the current sentence — or, for a paragraph begun and
+ * downloaded in the same breath, produces a file with an empty line where the
+ * writing is. That is the reported bug: "I downloaded my script and my edit was
+ * not in it."
+ *
+ * The caller (App) asks the view to commit before exporting, so in practice
+ * this override is already in the store by the time it arrives. It is still
+ * passed, because the one case a commit is refused — an IME mid-word (rule 6,
+ * ADR-0010) — is exactly the case a Malayalam writer is most likely to be in.
+ */
+export interface PendingEdit {
+  blockId: string;
+  text: string;
+}
+
+/**
  * Read every live paragraph in document order and join it.
  *
  * Ordered by the `[docId+order]` index, which is the same lexicographic string
@@ -43,14 +64,21 @@ export interface DocumentExport {
  * export, and it is bounded by the document rather than by history: 100k words
  * of Malayalam is on the order of a megabyte.
  */
-export async function exportDocument(db: EzhuthuDB, docId: DocId): Promise<DocumentExport> {
+export async function exportDocument(
+  db: EzhuthuDB,
+  docId: DocId,
+  pending?: PendingEdit | null,
+): Promise<DocumentExport> {
   const texts: string[] = [];
 
   await db.blocks
     .where('[docId+order]')
     .between([docId, ''], [docId, '￿'])
     .each((block) => {
-      if (block.deletedAt === undefined) texts.push(block.text);
+      if (block.deletedAt !== undefined) return;
+      texts.push(
+        pending != null && pending.blockId === block.blockId ? pending.text : block.text,
+      );
     });
 
   const text = texts.length === 0 ? '' : joinBlocks(texts);

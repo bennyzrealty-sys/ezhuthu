@@ -20,13 +20,44 @@
  *    check there commits an EMPTY block, so do not "simplify" it away.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  type RefObject,
+} from 'react';
 import { placeCaret } from './caret';
 import { previousClusterBoundary } from '../text/segmenter';
 import type { TypingSignals } from '../signals/typing';
 
 /** Quiet time before an edit is committed to the log. */
 export const IDLE_COMMIT_MS = 400;
+
+/**
+ * What the focused editor can be asked for from outside.
+ *
+ * The draft lives in a ref here and nowhere else — that is rule 1 of this file,
+ * and it is why the field can be typed into without a render. The consequence
+ * is that everything OUTSIDE this component, including the thing that writes
+ * the document to a file, sees only what has been committed: up to
+ * `IDLE_COMMIT_MS` of the writer's most recent sentence is invisible to it.
+ * That is the whole of the "I downloaded my script and my edit was not in it"
+ * bug. `flush` is the seam that closes it.
+ */
+export interface BlockEditorHandle {
+  /**
+   * Hand over the current draft and stand down the idle timer.
+   *
+   * Does not write anything: the caller owns the append path and has to be able
+   * to await it. `composing` is passed out rather than acted on here, because
+   * refusing to COMMIT during composition (rule 6, ADR-0010) is about not
+   * corrupting the input, and says nothing about what a file should contain —
+   * the text is what the writer can see either way.
+   */
+  flush: () => { blockId: string; text: string; composing: boolean };
+}
 
 export interface BlockEditorProps {
   blockId: string;
@@ -49,6 +80,8 @@ export interface BlockEditorProps {
    * second caller cannot forget it (ADR-0010).
    */
   typing?: TypingSignals;
+  /** Imperative access to the in-flight draft. See `BlockEditorHandle`. */
+  handleRef?: RefObject<BlockEditorHandle | null>;
 }
 
 /**
@@ -71,6 +104,7 @@ export function BlockEditor({
   onBlur,
   onHeight,
   typing,
+  handleRef,
 }: BlockEditorProps) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const composing = useRef(false);
@@ -99,6 +133,22 @@ export function BlockEditor({
     if (composing.current) return;
     timer.current = window.setTimeout(commitNow, IDLE_COMMIT_MS);
   }, [clearTimer, commitNow]);
+
+  useImperativeHandle(
+    handleRef,
+    () => ({
+      flush() {
+        // The field is the truth, not `draft`: text the browser has put in
+        // `value` but not yet reported through an input event (an IME's own
+        // buffer, a paste mid-processing) is already visible to the writer.
+        const text = ref.current?.value ?? draft.current;
+        draft.current = text;
+        clearTimer();
+        return { blockId, text, composing: composing.current };
+      },
+    }),
+    [blockId, clearTimer],
+  );
 
   /** Grow to fit, and report the height so the virtualiser can reserve it. */
   const resize = useCallback(() => {

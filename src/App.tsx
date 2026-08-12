@@ -233,6 +233,25 @@ export default function App() {
     [],
   );
 
+  /*
+   * Commit whatever the writer is in the middle of typing, before anything
+   * reads the document as a whole.
+   *
+   * Download, Back up and Export corpus all read committed state — the `blocks`
+   * projection or the event log — and the paragraph under the caret is in
+   * neither for up to `IDLE_COMMIT_MS` after the last keystroke (ADR-0036). On
+   * the browsers where tapping a button moves focus, the editor's own blur
+   * happened to commit first and this was invisible; on the ones where it does
+   * not (Safari and iOS do not focus a button on tap), the file arrived without
+   * the writer's most recent work, and a paragraph begun and downloaded in the
+   * same breath arrived EMPTY.
+   *
+   * Awaited, so the append has committed before the read starts.
+   */
+  const flushEdits = useCallback(async () => {
+    return (await view.current?.flushPendingEdit()) ?? null;
+  }, []);
+
   const onImport = useCallback(
     async (file: File) => {
       setBusy('Importing…');
@@ -288,7 +307,8 @@ export default function App() {
   const onDownload = useCallback(() => {
     setBusy('Preparing the file…');
     const now = Date.now();
-    exportDocument(db, DOC_ID)
+    flushEdits()
+      .then((pending) => exportDocument(db, DOC_ID, pending))
       .then(({ text, blocks, characters }) => {
         if (blocks === 0) {
           setMessage('Nothing to download yet — the document is empty.');
@@ -301,12 +321,13 @@ export default function App() {
       })
       .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(null));
-  }, [status?.doc.title]);
+  }, [flushEdits, status?.doc.title]);
 
   const onExportCorpus = useCallback(() => {
     setBusy('Building the corpus…');
     const now = Date.now();
-    exportCorpus(db, DOC_ID)
+    flushEdits()
+      .then(() => exportCorpus(db, DOC_ID))
       .then(({ jsonl, stats }) => {
         if (stats.emitted === 0) {
           setMessage(
@@ -325,11 +346,14 @@ export default function App() {
       })
       .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(null));
-  }, [status?.doc.title]);
+  }, [flushEdits, status?.doc.title]);
 
   const onBackup = useCallback(() => {
     setBusy('Backing up…');
-    runBackup(db)
+    // A backup that omits the sentence the writer is looking at is the one
+    // failure ADR-0013 exists to prevent, dressed as a success.
+    flushEdits()
+      .then(() => runBackup(db))
       .then((r) =>
         setMessage(
           `Backed up ${r.eventCount.toLocaleString()} events (${Math.round(r.bytes / 1024)} KB) via ${r.destination}.`,
@@ -340,7 +364,7 @@ export default function App() {
         setBusy(null);
         refresh();
       });
-  }, [refresh]);
+  }, [flushEdits, refresh]);
 
   /*
    * One button for three platforms' worth of reality. Where the browser has

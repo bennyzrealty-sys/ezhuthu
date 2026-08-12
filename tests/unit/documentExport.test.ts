@@ -74,6 +74,44 @@ describe('exporting the document', () => {
     expect(text).toBe('നിലനിൽക്കുന്നു\n');
   });
 
+  /*
+   * The paragraph the writer is still typing into. The editor holds it in a ref
+   * for 400ms so that a keystroke costs no render, so the store does not have
+   * it yet — and a download taken in that window is what arrived without the
+   * writer's work in it (ADR-0036).
+   */
+  it('prefers the paragraph being typed over the stored one', async () => {
+    const first = await insertBlock(db, DOC, 'പഴയ വാചകം');
+    await insertBlock(db, DOC, 'രണ്ടാമത്തേത്');
+
+    const { text } = await exportDocument(db, DOC, {
+      blockId: first.blockId,
+      text: 'തിരുത്തിയ വാചകം',
+    });
+    expect(text).toBe('തിരുത്തിയ വാചകം\n\nരണ്ടാമത്തേത്\n');
+  });
+
+  it('carries a paragraph that has been started but never committed', async () => {
+    // The worst shape of the bug: Start writing, type, download. The block
+    // exists because insertBlock created it; its text is still ''.
+    const started = await insertBlock(db, DOC, '');
+
+    const stored = await exportDocument(db, DOC);
+    expect(stored.text).toBe('\n');
+
+    const live = await exportDocument(db, DOC, {
+      blockId: started.blockId,
+      text: 'ഇപ്പോൾ എഴുതിയത്',
+    });
+    expect(live.text).toBe('ഇപ്പോൾ എഴുതിയത്\n');
+  });
+
+  it('ignores a pending edit for a paragraph that is not in the document', async () => {
+    await insertBlock(db, DOC, 'ഒന്ന്');
+    const { text } = await exportDocument(db, DOC, { blockId: 'gone', text: 'ഇല്ല' });
+    expect(text).toBe('ഒന്ന്\n');
+  });
+
   it('says nothing rather than a stray newline for an empty document', async () => {
     expect(await exportDocument(db, DOC)).toEqual({ text: '', blocks: 0, characters: 0 });
   });
